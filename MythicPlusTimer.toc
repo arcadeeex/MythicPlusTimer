@@ -1,0 +1,31 @@
+## Interface: 30300
+## Title: MythicPlus Timer
+## Notes: Timer and tracker for Mythic+ dungeons on Sirus
+## Author:
+## Version: 0.1.0
+## SavedVariables: MythicPlusTimerDB
+## SavedVariablesPerCharacter: MythicPlusTimerCharDB
+
+# Core
+Core.lua
+
+# Options panel (Interface → Addons)
+Options.lua
+
+# Static NPC forces database
+NpcDatabase.lua
+
+# Static boss list per dungeon
+BossDatabase.lua
+
+# MVP timer (draggable, shows time / forces / deaths)
+Timer.lua
+
+# Auto-slot keystone on receptacle open
+KeystoneSlot.lua
+
+# Tooltip: NPC forces %
+Tooltip.lua
+
+# Data collection (debug/research - disable after API is verified)
+DataCollector.lua
