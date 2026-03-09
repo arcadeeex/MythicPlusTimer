@@ -3,3 +3,7 @@
 .cursor/
 scripts/
 
+# Generated mask assets (scripts/gen_icon_circle_mask.py)
+Media/icon_circle_corners.png
+Media/icon_circle_corners.blp
+

@@ -10,22 +10,22 @@
 Core.lua
 
 # Options panel (Interface → Addons)
-Options.lua
+UI\Options.lua
 
 # Static NPC forces database
-NpcDatabase.lua
+Data\NpcDatabase.lua
 
 # Static boss list per dungeon
-BossDatabase.lua
+Data\BossDatabase.lua
 
 # MVP timer (draggable, shows time / forces / deaths)
-Timer.lua
+UI\Timer.lua
 
 # Auto-slot keystone on receptacle open
-KeystoneSlot.lua
+Features\KeystoneSlot.lua
 
 # Tooltip: NPC forces %
-Tooltip.lua
+Features\Tooltip.lua
 
 # Data collection (debug/research - disable after API is verified)
-DataCollector.lua
+Features\DataCollector.lua
