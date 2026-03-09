@@ -17,13 +17,19 @@ local function IsInMythicDungeon()
     return diffID == 3
 end
 
--- Читаем прогресс из UI StatusBar (0-100)
+-- Читаем прогресс: сначала API (часто обновляется сразу), иначе UI StatusBar (0-100).
+-- Для обучения нужен источник, который обновляется сразу после убийства.
 local function GetProgressBarValue()
+    local ok, pct = pcall(function()
+        return C_ChallengeMode and C_ChallengeMode.GetEnemyForcesProgress()
+    end)
+    if ok and type(pct) == "number" then
+        return pct
+    end
     local bar = _G["ScenarioObjectiveTrackerPoolFrameScenarioProgressBarTemplate1_77Bar"]
     if bar and bar.GetValue then
         return bar:GetValue()
     end
-    -- Резервный поиск по паттерну
     for k, v in pairs(_G) do
         if type(k) == "string"
             and string.find(k, "^ScenarioObjectiveTrackerPoolFrameScenarioProgressBarTemplate.*Bar$")
@@ -416,10 +422,11 @@ local MAX_KILL_DEBUG = 30
 -- Последнее значение полоски прогресса (для дельты при обучении по убийствам).
 -- Должно обновляться часто (0.15 с), иначе дельта при убийстве будет включать несколько мобов.
 local lastForcesBar = 0
--- Очередь NPC для отложенного обучения: полоска прогресса обновляется после убийства с задержкой,
--- поэтому учим не в момент UNIT_DIED, а когда в тикере увидим изменение бара.
+-- Очередь для отложенного обучения: { npcID, barAtKill, time }.
+-- Сервер присылает новый % с задержкой, поэтому ждём LEARN_DELAY сек и только потом читаем бар.
 local pendingLearnQueue = {}
 local MAX_PENDING_LEARN = 30
+local LEARN_DELAY = 0.5
 
 -- Периодический сбор данных во время ключа (каждые 30 сек) + частое обновление lastForcesBar (0.15 с)
 local ticker = CreateFrame("Frame")
@@ -432,26 +439,33 @@ ticker:SetScript("OnUpdate", function(self, elapsed)
     lastTick = lastTick + elapsed
     forcesUpdateThrottle = forcesUpdateThrottle + elapsed
     local inKey = C_ChallengeMode.IsChallengeModeActive() or IsInMythicDungeon()
-    -- Частое обновление lastForcesBar + отложенное обучение: полоска обновляется после убийства с задержкой,
-    -- поэтому при изменении бара списываем дельту на первого NPC из очереди убийств.
+    -- Отложенное обучение: для первого в очереди ждём LEARN_DELAY сек, затем читаем бар и учим по дельте.
+    -- lastForcesBar обновляем только когда очередь пуста, иначе barAtKill у ожидающих остаётся верным.
     if inKey and forcesUpdateThrottle >= FORCES_UPDATE_INTERVAL then
         forcesUpdateThrottle = 0
         local bar = GetProgressBarValue()
         if bar and type(bar) == "number" then
-            if #pendingLearnQueue > 0 and (bar - lastForcesBar) >= 0 and (bar - lastForcesBar) <= 5 then
-                local delta = bar - lastForcesBar
-                local npcID = table.remove(pendingLearnQueue, 1)
-                if npcID and MPT and MPT.LearnNpcForces then
-                    local pct = (delta < 0.01) and 0 or delta
-                    local knownPct = MPT:GetNpcForces(npcID)
-                    if knownPct == nil then
-                        MPT:LearnNpcForces(npcID, pct)
-                    elseif math.abs(pct - knownPct) > 0.1 then
-                        MPT:LearnNpcForces(npcID, pct, true)
+            if #pendingLearnQueue > 0 then
+                local first = pendingLearnQueue[1]
+                if GetTime() - (first.time or 0) >= LEARN_DELAY then
+                    local barAtKill = first.barAtKill
+                    local delta = bar - (barAtKill or lastForcesBar)
+                    if delta >= 0 and delta <= 5 and MPT and MPT.LearnNpcForces then
+                        local npcID = first.npcID
+                        local pct = (delta < 0.01) and 0 or delta
+                        local knownPct = MPT:GetNpcForces(npcID)
+                        if knownPct == nil then
+                            MPT:LearnNpcForces(npcID, pct)
+                        elseif math.abs(pct - knownPct) > 0.1 then
+                            MPT:LearnNpcForces(npcID, pct, true)
+                        end
                     end
+                    lastForcesBar = bar
+                    table.remove(pendingLearnQueue, 1)
                 end
+            else
+                lastForcesBar = bar
             end
-            lastForcesBar = bar
         end
     end
     if lastTick >= tickInterval then
@@ -621,11 +635,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local npcID = GetNPCIdFromGUID(destGUID)
         if not npcID or npcID == 0 then return end
 
-        -- Обучение отложенное: полоска прогресса в UI обновляется после убийства с задержкой (сервер),
-        -- поэтому в момент UNIT_DIED бар ещё старый и дельта = 0. Кладём npcID в очередь; в тикере
-        -- при следующем изменении бара спишем дельту на первого в очереди.
+        -- Обучение отложенное: сервер присылает новый % с задержкой. Кладём в очередь bar на сейчас и время;
+        -- через LEARN_DELAY сек в тикере прочитаем бар снова и дельта = новый_бар - barAtKill.
         if #pendingLearnQueue < MAX_PENDING_LEARN then
-            table.insert(pendingLearnQueue, npcID)
+            table.insert(pendingLearnQueue, {
+                npcID     = npcID,
+                barAtKill = lastForcesBar,
+                time      = GetTime(),
+            })
         end
 
         if #recentKillsDebug < MAX_KILL_DEBUG and MPT and MPT.db then
