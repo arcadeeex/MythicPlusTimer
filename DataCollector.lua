@@ -269,6 +269,25 @@ local function TakeSnapshot(label)
         end
     end
 
+    -- Дебаг воскрешений: пробуем все методы C_ChallengeMode, похожие на res/brez/soul/charge
+    if MPT.db.debug then
+        snap.ResurrectionAPI = {}
+        if type(C_ChallengeMode) == "table" then
+            for key, val in pairs(C_ChallengeMode) do
+                local k = tostring(key):lower()
+                if k:find("resurrect") or k:find("res") or k:find("soul") or k:find("battle") or k:find("brez") or k:find("charge") or k:find("revive") or k:find("death") then
+                    local ok, result = pcall(function()
+                        if type(val) == "function" then
+                            return val()
+                        end
+                        return val
+                    end)
+                    snap.ResurrectionAPI[tostring(key)] = ok and tostring(result) or ("ERR: " .. tostring(result))
+                end
+            end
+        end
+    end
+
     -- Сохраняем снапшот
     table.insert(MPT.db.snapshots, snap)
 
@@ -298,26 +317,124 @@ local function TakeSnapshot(label)
                 snap.CompletionInfo["r7"] or "nil",
                 snap.CompletionInfo["r8"] or "nil"))
         end
+        if type(snap.ResurrectionAPI) == "table" and next(snap.ResurrectionAPI) then
+            MPT:Print("  ResurrectionAPI (C_ChallengeMode):")
+            for k, v in pairs(snap.ResurrectionAPI) do
+                MPT:Print(string.format("    %s = %s", k, v))
+            end
+        end
     end
+end
+
+-- Сканирует фреймы и C_ChallengeMode для поиска источника данных о воскрешениях (сердечко/цифра).
+-- Вызов: /mpt resdebug или MPT:DumpResurrectionSources()
+local function ScanFrameForText(frame, depth, results, seen)
+    if not frame or type(frame) ~= "table" or seen[frame] or depth > 8 then return end
+    seen[frame] = true
+    local name = frame.GetName and frame:GetName() or ""
+    local objType = frame.GetObjectType and pcall(function() return frame:GetObjectType() end) and frame:GetObjectType() or "?"
+    if objType == "FontString" and frame.GetText then
+        local ok, text = pcall(function() return frame:GetText() end)
+        if ok and text and text ~= "" then
+            results[#results + 1] = { name = name or "(noname)", text = text, depth = depth }
+        end
+    end
+    if frame.GetNumChildren then
+        for i = 1, frame:GetNumChildren() do
+            local ch = select(i, frame:GetChildren())
+            if ch then ScanFrameForText(ch, depth + 1, results, seen) end
+        end
+    end
+    local numRegions = frame.GetNumRegions and frame:GetNumRegions()
+    if numRegions then
+        for i = 1, numRegions do
+            local r = select(i, frame:GetRegions())
+            if r and r.GetObjectType and r:GetObjectType() == "FontString" and r.GetText then
+                local ok, text = pcall(function() return r:GetText() end)
+                if ok and text and text ~= "" then
+                    results[#results + 1] = { name = name or "(regions of " .. tostring(frame) .. ")", text = text, depth = depth }
+                end
+            end
+        end
+    end
+end
+
+function MPT:DumpResurrectionSources()
+    if not self.Print then return end
+    self:Print("=== Дебаг воскрешений (сердечко/цифра) ===")
+
+    -- 1) Все ключи C_ChallengeMode (чтобы увидеть возможные Get*Resurrection* и т.п.)
+    self:Print("--- C_ChallengeMode (все ключи) ---")
+    if type(C_ChallengeMode) ~= "table" then
+        self:Print("  C_ChallengeMode не таблица: " .. tostring(C_ChallengeMode))
+    else
+        local keys = {}
+        for k in pairs(C_ChallengeMode) do keys[#keys + 1] = tostring(k) end
+        table.sort(keys)
+        for _, k in ipairs(keys) do
+            local val = C_ChallengeMode[k]
+            local typ = type(val)
+            if typ == "function" then
+                local ok, res = pcall(val)
+                self:Print(string.format("  %s = function -> %s", k, ok and tostring(res) or ("ERR: " .. tostring(res))))
+            else
+                self:Print(string.format("  %s = %s (%s)", k, tostring(val), typ))
+            end
+        end
+    end
+
+    -- 2) Сканирование фреймов Scenario/Objective/Challenge — ищем текст (цифры рядом с сердечком/надгробием)
+    self:Print("--- Фреймы Scenario/Objective/Tracker (FontString текст) ---")
+    local results = {}
+    local seen = {}
+    for globalName, v in pairs(_G) do
+        if type(globalName) == "string" and (globalName:find("Scenario") or globalName:find("Objective") or globalName:find("Challenge") or globalName:find("Tracker")) then
+            if type(v) == "table" and v.GetObjectType then
+                local ok = pcall(function() ScanFrameForText(v, 0, results, seen) end)
+                if not ok then
+                    self:Print(string.format("  [%s] scan err", globalName))
+                end
+            end
+        end
+    end
+    for _, r in ipairs(results) do
+        self:Print(string.format("  [%s] depth=%d text=%s", r.name, r.depth, r.text))
+    end
+    if #results == 0 then
+        self:Print("  Нет найденного текста. Открой стандартный UI ключа (трекер целей) и снова введи /mpt resdebug")
+    end
+    self:Print("=== Конец дебага воскрешений ===")
 end
 
 -- Буфер недавних убийств для тестирования GUID парсинга (первые 30 убийств)
 local recentKillsDebug = {}
 local MAX_KILL_DEBUG = 30
--- Последнее значение полоски прогресса (для дельты при обучении по убийствам)
+-- Последнее значение полоски прогресса (для дельты при обучении по убийствам).
+-- Должно обновляться часто (0.15 с), иначе дельта при убийстве будет включать несколько мобов.
 local lastForcesBar = 0
 
--- Периодический сбор данных во время ключа (каждые 30 сек)
+-- Периодический сбор данных во время ключа (каждые 30 сек) + частое обновление lastForcesBar (0.15 с)
 local ticker = CreateFrame("Frame")
 local tickInterval = 30
 local lastTick = 0
+local forcesUpdateThrottle = 0
+local FORCES_UPDATE_INTERVAL = 0.15
 ticker:SetScript("OnUpdate", function(self, elapsed)
     if not MPT or not MPT.db then return end
     lastTick = lastTick + elapsed
+    forcesUpdateThrottle = forcesUpdateThrottle + elapsed
+    local inKey = C_ChallengeMode.IsChallengeModeActive() or IsInMythicDungeon()
+    -- Частое обновление lastForcesBar, чтобы при событии смерти дельта = текущий - lastForcesBar была ровно за этого моба
+    if inKey and forcesUpdateThrottle >= FORCES_UPDATE_INTERVAL then
+        forcesUpdateThrottle = 0
+        local bar = GetProgressBarValue()
+        if bar and type(bar) == "number" then
+            lastForcesBar = bar
+        end
+    end
     if lastTick >= tickInterval then
         lastTick = 0
-        -- Используем оба способа детекции ключа
-        if C_ChallengeMode.IsChallengeModeActive() or IsInMythicDungeon() then
+        if inKey then
             lastForcesBar = GetProgressBarValue() or lastForcesBar
             TakeSnapshot("TICK_" .. tickInterval .. "s")
         end
@@ -452,17 +569,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         if not IsInMythicDungeon() then return end
-        local _, eventType, a3, _, _, a6, a7, a8, a9 = ...
+        local eventType = select(2, ...)
         if eventType ~= "UNIT_DIED" and eventType ~= "PARTY_KILL" then return end
-        -- Авто-определение формата:
-        --   WotLK 3.3.5: timestamp, subevent, srcGUID, srcName, srcFlags, destGUID, destName, destFlags
-        --   Cata+:        timestamp, subevent, hideCaster(bool), srcGUID, srcName, srcFlags, destGUID, destName, destFlags
-        local destGUID, destName, destFlags
-        if type(a3) == "boolean" then
-            destGUID, destName, destFlags = a7, a8, a9  -- Cata+
-        else
-            destGUID, destName, destFlags = a6, a7, a8  -- WotLK
-        end
+        -- WotLK 3.3.5: 6=destGUID, 7=destName, 8=destFlags
+        local destGUID  = select(6, ...)
+        local destName  = select(7, ...)
+        local destFlags = select(8, ...)
         if not destFlags then return end
 
         local HOSTILE  = 0x00000040
@@ -482,22 +594,25 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local npcID = GetNPCIdFromGUID(destGUID)
         if not npcID or npcID == 0 then return end
 
-        -- Обучение базы: записываем дельту прогресса при каждом убийстве.
-        -- lastForcesBar обновляем всегда, иначе дельта накапливает вклад пропущенных мобов.
+        -- Обучение: дельта = текущий прогресс − прогресс до этого убийства = % за этого моба.
+        -- Если дельта 0 — моб не даёт прогресса (0%). Если расходится с базой — используем новое значение.
         local currentBar = GetProgressBarValue()
         if currentBar and type(currentBar) == "number" then
             local delta = currentBar - lastForcesBar
-            if delta > 0 and delta <= 5 and MPT and MPT.GetNpcForces then
+            -- Всегда обновляем lastForcesBar, чтобы следующее убийство считало дельту от этого момента
+            lastForcesBar = currentBar
+
+            -- Дельта за одного моба обычно 0–2%; >5% — несколько убийств в одном тике или шум, не учим
+            if delta >= 0 and delta <= 5 and MPT and MPT.LearnNpcForces then
+                local pct = (delta < 0.01) and 0 or delta
                 local knownPct = MPT:GetNpcForces(npcID)
                 if knownPct == nil then
-                    -- Неизвестный NPC — просто учим
-                    MPT:LearnNpcForces(npcID, delta)
-                elseif math.abs(delta - knownPct) > 0.1 then
-                    -- Известный NPC, но значение изменилось на сервере — перезаписываем
-                    MPT:LearnNpcForces(npcID, delta, true)
+                    MPT:LearnNpcForces(npcID, pct)
+                elseif math.abs(pct - knownPct) > 0.1 then
+                    -- Значение изменилось на сервере — перезаписываем
+                    MPT:LearnNpcForces(npcID, pct, true)
                 end
             end
-            lastForcesBar = currentBar
         end
 
         if #recentKillsDebug < MAX_KILL_DEBUG and MPT and MPT.db then

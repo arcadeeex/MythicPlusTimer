@@ -23,6 +23,7 @@ local state = {
     mapID                 = nil,  -- C_ChallengeMode.GetActiveChallengeMapID()
     bosses                = nil,  -- list of {name, killed, fightDuration, isNewFdPB}
     encounterStartElapsed = nil,  -- elapsed при ENCOUNTER_START текущего боя
+    wasPaused             = false,  -- для коррекции startTime при снятии паузы
 }
 
 -- Локальный счётчик смертей из ASMSG (fallback если GetDeathCount() не работает)
@@ -65,6 +66,16 @@ end
 
 local function FormatTime(sec)
     if not sec or sec < 0 then sec = 0 end
+    return string.format("%d:%02d", math.floor(sec / 60), math.floor(sec % 60))
+end
+
+-- Форматирует убывающее время: может быть отрицательным → "-M:SS"
+local function FormatCountdown(sec)
+    if not sec then return "0:00" end
+    if sec < 0 then
+        local abs = -sec
+        return string.format("-%d:%02d", math.floor(abs / 60), math.floor(abs % 60))
+    end
     return string.format("%d:%02d", math.floor(sec / 60), math.floor(sec % 60))
 end
 
@@ -176,7 +187,7 @@ frame:SetClampedToScreen(true)
 frame:SetMovable(true)
 frame:EnableMouse(true)
 
--- Лёгкий тёмный фон для читаемости текста
+-- Лёгкий тёмный фон для читаемости текста (прозрачный)
 local bg = frame:CreateTexture(nil, "BACKGROUND")
 bg:SetAllPoints(frame)
 bg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
@@ -215,6 +226,19 @@ frame.affixesLine2:Hide()
 local AFFIX_ICON_SIZE = 22
 local AFFIX_ICON_GAP  = 8  -- расстояние между иконками
 local MAX_AFFIX_ICONS = 8
+
+-- Краткие названия подземелий по mapID (для заголовка и свёрнутого режима)
+local shortDungeonName = {
+    [4]  = "Крепость Утгард",
+    [5]  = "Бастионы Адского Пламени",
+    [6]  = "Узилище",
+    [8]  = "Крепость Драк'Тарон",
+    [9]  = "Чертоги Молний",
+    [10] = "Кузня Крови",
+    [11] = "Гробницы Маны",
+    [12] = "Ан'кахет",
+}
+
 frame.affixesIcons = CreateFrame("Frame", nil, frame)
 frame.affixesIcons:SetHeight(AFFIX_ICON_SIZE)
 frame.affixesIcons:SetPoint("TOPLEFT",  frame, "TOPLEFT",  8, -24)
@@ -226,15 +250,16 @@ for i = 1, MAX_AFFIX_ICONS do
     local iconFrame = CreateFrame("Frame", nil, frame.affixesIcons)
     iconFrame:SetWidth(AFFIX_ICON_SIZE)
     iconFrame:SetHeight(AFFIX_ICON_SIZE)
-    -- Иконка
+    -- Иконка: кроп краёв чтобы скрыть угловые артефакты иконки
     local tex = iconFrame:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(iconFrame)
-    tex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    tex:SetTexCoord(0.05, 0.95, 0.05, 0.95)
     iconFrame.tex = tex
-    -- Скругление: непрозрачный чёрный оверлей с прозрачным кругом в центре
-    local corner = iconFrame:CreateTexture(nil, "OVERLAY")
-    corner:SetAllPoints(iconFrame)
-    corner:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\icon_corner")
+    -- Кольцо-рамка поверх иконки: перекрывает квадратные углы тёмным кольцом
+    local border = iconFrame:CreateTexture(nil, "OVERLAY")
+    border:SetAllPoints(iconFrame)
+    border:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\icon_border")
+    iconFrame.border = border
     -- Тултип аффиксов при наведении на иконку
     iconFrame:EnableMouse(true)
     iconFrame:SetScript("OnEnter", function(self) ShowAffixTooltip(self) end)
@@ -249,6 +274,14 @@ frame.timer:SetFont("Fonts\\FRIZQT__.TTF", 20, "")
 frame.timer:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -56)
 frame.timer:SetText("--:--")
 frame.timer:SetTextColor(0.5, 0.5, 0.5)
+
+-- Метка "Пауза" справа от таймера (одна строка, красный цвет)
+frame.pauseLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+frame.pauseLabel:SetFont("Fonts\\FRIZQT__.TTF", 20, "")
+frame.pauseLabel:SetPoint("LEFT", frame.timer, "RIGHT", 10, 0)
+frame.pauseLabel:SetText("Пауза")
+frame.pauseLabel:SetTextColor(1, 0, 0)
+frame.pauseLabel:Hide()
 
 -- Строки порогов +2/+3: позиции пересчитываются в UpdateTimerLayout
 frame.plus2 = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -268,7 +301,7 @@ frame.plus3:Hide()
 
 -- Строки боссов: динамическая высота (16px = 1 строка, 28px = 2 строки с переносом)
 -- Позиции пересчитываются в UpdateBossLayout после каждого SetText на строке
-local MAX_BOSSES = 4
+local MAX_BOSSES = 5
 local BOSS_LINE_H1    = 16  -- одна строка (~14px + 2px зазор)
 local BOSS_LINE_H2    = 28  -- две строки
 local BOSS_FIRST_OFFSET = 8  -- отступ от top блока боссов до первой строки
@@ -316,15 +349,238 @@ frame.forcesBarFill:SetHeight(14) -- 16px контейнер - 2px (1px top + 1p
 local fbFill = frame.forcesBarFill:CreateTexture(nil, "ARTWORK")
 fbFill:SetAllPoints(frame.forcesBarFill)
 fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
-fbFill:SetVertexColor(0.25, 0.55, 1.0, 0.9)
 
--- Текст поверх, родитель — контейнер, OVERLAY
+-- Таблица текстур для прогресс-бара (имя → путь)
+local SM_BAR = "Interface\\AddOns\\SharedMedia\\Media\\Statusbar\\"
+MPT.BAR_TEXTURES = {
+    { name = "Blank",              path = "Interface\\BUTTONS\\WHITE8X8" },
+    { name = "Aluminium",          path = SM_BAR.."Aluminium" },
+    { name = "Armory",             path = SM_BAR.."Armory" },
+    { name = "BantoBar",           path = SM_BAR.."BantoBar" },
+    { name = "Bars",               path = SM_BAR.."Bars" },
+    { name = "Bezo",               path = SM_BAR.."Bezo" },
+    { name = "Bezo Dark",          path = SM_BAR.."Bezo-dark1" },
+    { name = "Bezo Darker",        path = SM_BAR.."Bezo-dark2" },
+    { name = "Blinkii",            path = SM_BAR.."Blinkii" },
+    { name = "BuiOnePixel",        path = SM_BAR.."BuiOnePixel" },
+    { name = "Bumps",              path = SM_BAR.."Bumps" },
+    { name = "Button",             path = SM_BAR.."Button" },
+    { name = "Charcoal",           path = SM_BAR.."Charcoal" },
+    { name = "Cilo",               path = SM_BAR.."Cilo" },
+    { name = "Cloud",              path = SM_BAR.."Cloud" },
+    { name = "Combo",              path = SM_BAR.."Combo" },
+    { name = "Comet",              path = SM_BAR.."Comet" },
+    { name = "Dabs",               path = SM_BAR.."Dabs" },
+    { name = "DarkBottom",         path = SM_BAR.."DarkBottom" },
+    { name = "Diagonal",           path = SM_BAR.."Diagonal" },
+    { name = "Empty",              path = SM_BAR.."Empty" },
+    { name = "Falumn",             path = SM_BAR.."Falumn" },
+    { name = "Ferous 1",           path = SM_BAR.."Ferous1" },
+    { name = "Ferous 2",           path = SM_BAR.."Ferous2" },
+    { name = "Ferous 3",           path = SM_BAR.."Ferous3" },
+    { name = "Ferous 4",           path = SM_BAR.."Ferous4" },
+    { name = "Ferous 5",           path = SM_BAR.."Ferous5" },
+    { name = "Ferous 6",           path = SM_BAR.."Ferous6" },
+    { name = "Ferous 7",           path = SM_BAR.."Ferous7" },
+    { name = "Ferous 8",           path = SM_BAR.."Ferous8" },
+    { name = "Ferous 9",           path = SM_BAR.."Ferous9" },
+    { name = "Ferous 10",          path = SM_BAR.."Ferous10" },
+    { name = "Ferous 11",          path = SM_BAR.."Ferous11" },
+    { name = "Ferous 12",          path = SM_BAR.."Ferous12" },
+    { name = "Ferous 13",          path = SM_BAR.."Ferous13" },
+    { name = "Ferous 14",          path = SM_BAR.."Ferous14" },
+    { name = "Ferous 15",          path = SM_BAR.."Ferous15" },
+    { name = "Ferous 16",          path = SM_BAR.."Ferous16" },
+    { name = "Ferous 17",          path = SM_BAR.."Ferous17" },
+    { name = "Ferous 18",          path = SM_BAR.."Ferous18" },
+    { name = "Ferous 19",          path = SM_BAR.."Ferous19" },
+    { name = "Ferous 20",          path = SM_BAR.."Ferous20" },
+    { name = "Ferous 21",          path = SM_BAR.."Ferous21" },
+    { name = "Ferous 22",          path = SM_BAR.."Ferous22" },
+    { name = "Ferous 23",          path = SM_BAR.."Ferous23" },
+    { name = "Ferous 24",          path = SM_BAR.."Ferous24" },
+    { name = "Ferous 25",          path = SM_BAR.."Ferous25" },
+    { name = "Ferous 26",          path = SM_BAR.."Ferous26" },
+    { name = "Ferous 27",          path = SM_BAR.."Ferous27" },
+    { name = "Ferous 28",          path = SM_BAR.."Ferous28" },
+    { name = "Ferous 29",          path = SM_BAR.."Ferous29" },
+    { name = "Ferous 30",          path = SM_BAR.."Ferous30" },
+    { name = "Ferous 31",          path = SM_BAR.."Ferous31" },
+    { name = "Ferous 32",          path = SM_BAR.."Ferous32" },
+    { name = "Ferous 33",          path = SM_BAR.."Ferous33" },
+    { name = "Ferous 34",          path = SM_BAR.."Ferous34" },
+    { name = "Ferous 35",          path = SM_BAR.."Ferous35" },
+    { name = "Ferous 36",          path = SM_BAR.."Ferous36" },
+    { name = "Ferous 37",          path = SM_BAR.."Ferous37" },
+    { name = "Fifths",             path = SM_BAR.."Fifths" },
+    { name = "Flat",               path = SM_BAR.."Flat" },
+    { name = "Fourths",            path = SM_BAR.."Fourths" },
+    { name = "Frost",              path = SM_BAR.."Frost" },
+    { name = "Glamour",            path = SM_BAR.."Glamour" },
+    { name = "Glamour2",           path = SM_BAR.."Glamour2" },
+    { name = "Glamour3",           path = SM_BAR.."Glamour3" },
+    { name = "Glamour4",           path = SM_BAR.."Glamour4" },
+    { name = "Glamour5",           path = SM_BAR.."Glamour5" },
+    { name = "Glamour6",           path = SM_BAR.."Glamour6" },
+    { name = "Glamour7",           path = SM_BAR.."Glamour7" },
+    { name = "Glass",              path = SM_BAR.."Glass" },
+    { name = "Glaze",              path = SM_BAR.."Glaze" },
+    { name = "Glaze v2",           path = SM_BAR.."Glaze2" },
+    { name = "Gloss",              path = SM_BAR.."Gloss" },
+    { name = "Graphite",           path = SM_BAR.."Graphite" },
+    { name = "Grid",               path = SM_BAR.."Grid" },
+    { name = "Hatched",            path = SM_BAR.."Hatched" },
+    { name = "Healbot",            path = SM_BAR.."Healbot" },
+    { name = "LiteStep",           path = SM_BAR.."LiteStep" },
+    { name = "LiteStepLite",       path = SM_BAR.."LiteStepLite" },
+    { name = "Lyfe",               path = SM_BAR.."Lyfe" },
+    { name = "Melli",              path = SM_BAR.."Melli" },
+    { name = "Melli Dark",         path = SM_BAR.."MelliDark" },
+    { name = "Melli Dark Rough",   path = SM_BAR.."MelliDarkRough" },
+    { name = "Minimalist",         path = SM_BAR.."Minimalist" },
+    { name = "Norm",               path = SM_BAR.."Norm" },
+    { name = "Otravi",             path = SM_BAR.."Otravi" },
+    { name = "Outline",            path = SM_BAR.."Outline" },
+    { name = "Perl",               path = SM_BAR.."Perl" },
+    { name = "Perl v2",            path = SM_BAR.."Perl2" },
+    { name = "Pill",               path = SM_BAR.."Pill" },
+    { name = "Raeli 1",            path = SM_BAR.."Raeli1.tga" },
+    { name = "Raeli 2",            path = SM_BAR.."Raeli2.tga" },
+    { name = "Raeli 3",            path = SM_BAR.."Raeli3.tga" },
+    { name = "Raeli 4",            path = SM_BAR.."Raeli4.tga" },
+    { name = "Raeli 5",            path = SM_BAR.."Raeli5.tga" },
+    { name = "Raeli 6",            path = SM_BAR.."Raeli6.tga" },
+    { name = "Rain",               path = SM_BAR.."Rain" },
+    { name = "Rocks",              path = SM_BAR.."Rocks" },
+    { name = "Round",              path = SM_BAR.."Round" },
+    { name = "Ruben",              path = SM_BAR.."Ruben" },
+    { name = "Runes",              path = SM_BAR.."Runes" },
+    { name = "Skewed",             path = SM_BAR.."Skewed" },
+    { name = "Smooth",             path = SM_BAR.."Smooth" },
+    { name = "Smooth v2",          path = SM_BAR.."Smoothv2" },
+    { name = "Smudge",             path = SM_BAR.."Smudge" },
+    { name = "Steel",              path = SM_BAR.."Steel" },
+    { name = "Striped",            path = SM_BAR.."Striped" },
+    { name = "ToxiUI Clean",       path = SM_BAR.."ToxiUI-clean" },
+    { name = "ToxiUI Dark",        path = SM_BAR.."ToxiUI-dark" },
+    { name = "ToxiUI Half",        path = SM_BAR.."ToxiUI-half" },
+    { name = "ToxiUI Tx Left",     path = SM_BAR.."ToxiUI-g1" },
+    { name = "ToxiUI Tx Mid",      path = SM_BAR.."ToxiUI-grad" },
+    { name = "ToxiUI Tx Right",    path = SM_BAR.."ToxiUI-g2" },
+    { name = "Tube",               path = SM_BAR.."Tube" },
+    { name = "TX WorldState Score",path = SM_BAR.."TX-WorldState-Score" },
+    { name = "Water",              path = SM_BAR.."Water" },
+    { name = "Wglass",             path = SM_BAR.."Wglass" },
+    { name = "Wisps",              path = SM_BAR.."Wisps" },
+    { name = "Xeon",               path = SM_BAR.."Xeon" },
+}
+
+-- Таблица шрифтов (имя → путь).
+-- По умолчанию — встроенный Blizzard-шрифт. Список расширяется из LibSharedMedia-3.0 в PLAYER_LOGIN.
+local SM_FONT = "Interface\\AddOns\\SharedMedia\\Media\\Fonts\\"
+MPT.FONTS = {
+    { name = "Friz Quadrata (default)", path = "Fonts\\FRIZQT__.TTF" },
+}
+
+-- Расширить MPT.FONTS и MPT.BAR_TEXTURES данными из LibSharedMedia-3.0 (если установлен).
+-- Вызывается из Options.lua в PLAYER_LOGIN, когда LibStub уже доступен.
+function MPT:RefreshMediaLists()
+    local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+    if not LSM then
+        -- SharedMedia не установлен — используем компактный встроенный список
+        if #MPT.FONTS <= 1 then
+            local fallback = {
+                { name = "Accidental Presidency", path = SM_FONT.."AccidentalPresidency.ttf" },
+                { name = "Blender Pro",           path = SM_FONT.."BlenderPro.ttf" },
+                { name = "Blender Pro Bold",      path = SM_FONT.."BlenderProBold.ttf" },
+                { name = "Celestia Medium Redux",  path = SM_FONT.."CelestiaMediumRedux.ttf" },
+                { name = "DejaVu Sans",           path = SM_FONT.."DejaVuLGCSans.ttf" },
+                { name = "DejaVu Serif",          path = SM_FONT.."DejaVuLGCSerif.ttf" },
+                { name = "Expressway",            path = SM_FONT.."Expressway.ttf" },
+                { name = "FORCED SQUARE",         path = SM_FONT.."FORCEDSQUARE.ttf" },
+                { name = "Futura PT Bold",        path = SM_FONT.."FuturaPTBold.ttf" },
+                { name = "Futura PT Book",        path = SM_FONT.."FuturaPTBook.ttf" },
+                { name = "Futura PT Medium",      path = SM_FONT.."FuturaPTMedium.ttf" },
+                { name = "Hack",                  path = SM_FONT.."Hack.ttf" },
+                { name = "Impact",                path = SM_FONT.."Impact.ttf" },
+                { name = "Liberation Sans",       path = SM_FONT.."LiberationSans.ttf" },
+                { name = "PT Sans Narrow",        path = SM_FONT.."PTSansNarrow.ttf" },
+                { name = "Quicksand",             path = SM_FONT.."Quicksand.ttf" },
+                { name = "Steelfish Rg",          path = SM_FONT.."SteelfishRg.ttf" },
+                { name = "Ubuntu Condensed",      path = SM_FONT.."UbuntuCondensed.ttf" },
+                { name = "Ubuntu Light",          path = SM_FONT.."UbuntuLight.ttf" },
+                { name = "Yanone Kaffeesatz",     path = SM_FONT.."YanoneKaffeesatzRegular.ttf" },
+            }
+            for _, f in ipairs(fallback) do
+                MPT.FONTS[#MPT.FONTS + 1] = f
+            end
+        end
+        return
+    end
+
+    -- === Шрифты из LSM ===
+    local lsmFonts = LSM:HashTable("font")  -- { name -> path }
+    local newFonts = { { name = "Friz Quadrata (default)", path = "Fonts\\FRIZQT__.TTF" } }
+    local names = {}
+    for name in pairs(lsmFonts) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        newFonts[#newFonts + 1] = { name = name, path = lsmFonts[name] }
+    end
+    MPT.FONTS = newFonts
+
+    -- === Текстуры баров из LSM ===
+    local lsmBars = LSM:HashTable("statusbar")  -- { name -> path }
+    local newBars = { { name = "Blank", path = "Interface\\BUTTONS\\WHITE8X8" } }
+    local barNames = {}
+    for name in pairs(lsmBars) do
+        barNames[#barNames + 1] = name
+    end
+    table.sort(barNames)
+    for _, name in ipairs(barNames) do
+        newBars[#newBars + 1] = { name = name, path = lsmBars[name] }
+    end
+    MPT.BAR_TEXTURES = newBars
+end
+
+local function GetBarTexturePath(name)
+    for _, t in ipairs(MPT.BAR_TEXTURES) do
+        if t.name == name then return t.path end
+    end
+    return "Interface\\BUTTONS\\WHITE8X8"
+end
+
+local function ApplyForcesColor()
+    local r, g, b = 0.25, 0.55, 1.0
+    if MPT.db and MPT.db.forcesColor then
+        local c = MPT.db.forcesColor
+        if type(c.r) == "number" and type(c.g) == "number" and type(c.b) == "number" then
+            r, g, b = c.r, c.g, c.b
+        end
+    end
+    fbFill:SetVertexColor(r, g, b, 0.9)
+end
+
+local function ApplyForcesTexture()
+    local name = MPT.db and MPT.db.forcesTexture or "Blank"
+    fbFill:SetTexture(GetBarTexturePath(name))
+    ApplyForcesColor()
+end
+ApplyForcesTexture()
+
+-- Прозрачный Frame поверх заполнения — создаётся после forcesBarFill,
+-- поэтому рисуется выше него; его FontString всегда виден поверх бара.
+local fbTextFrame = CreateFrame("Frame", nil, frame.forcesBarContainer)
+fbTextFrame:SetAllPoints(frame.forcesBarContainer)
+
 frame.forcesBar = {}  -- таблица для совместимости с остальным кодом
-frame.forcesBar.text = frame.forcesBarContainer:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-frame.forcesBar.text:SetPoint("LEFT",  frame.forcesBarContainer, "LEFT",  4, 0)
-frame.forcesBar.text:SetPoint("RIGHT", frame.forcesBarContainer, "RIGHT", -4, 0)
+frame.forcesBar.text = fbTextFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.forcesBar.text:SetPoint("LEFT",  fbTextFrame, "LEFT",  4, 0)
+frame.forcesBar.text:SetPoint("RIGHT", fbTextFrame, "RIGHT", -4, 0)
 frame.forcesBar.text:SetJustifyH("CENTER")
-frame.forcesBar.text:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+frame.forcesBar.text:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
 frame.forcesBar.text:SetTextColor(1, 1, 1)
 
 -- SetValue: обновляет ширину заполнения (0-100%)
@@ -336,6 +592,44 @@ frame.forcesBar.SetValue = function(_, pct)
 end
 
 frame.forcesBarContainer:Hide()
+
+function MPT:RefreshForcesColor()
+    ApplyForcesColor()
+end
+
+function MPT:RefreshForcesTexture()
+    ApplyForcesTexture()
+end
+
+local function GetFontPath(name)
+    if MPT.FONTS then
+        for _, f in ipairs(MPT.FONTS) do
+            if f.name == name then return f.path end
+        end
+    end
+    return "Fonts\\FRIZQT__.TTF"
+end
+
+local function ApplyFont()
+    local path = GetFontPath(MPT.db and MPT.db.font or "Friz Quadrata (default)")
+    frame.title:SetFont(path, 13, "")
+    frame.affixes:SetFont(path, 11, "")
+    frame.affixesLine2:SetFont(path, 11, "")
+    frame.timer:SetFont(path, 20, "")
+    frame.pauseLabel:SetFont(path, 20, "")
+    frame.plus2:SetFont(path, 12, "")
+    frame.plus3:SetFont(path, 12, "")
+    for i = 1, MAX_BOSSES do
+        frame.bossLines[i]:SetFont(path, 11, "")
+    end
+    frame.forces:SetFont(path, 11, "")
+    frame.forcesBar.text:SetFont(path, 11, "")
+    frame.deaths:SetFont(path, 11, "")
+end
+
+function MPT:RefreshFont()
+    ApplyFont()
+end
 
 -- Смерти
 frame.deaths = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -352,7 +646,7 @@ frame.deaths:SetText("|cff888888Смертей: —|r")
 local forfeitBtn = CreateFrame("Button", nil, frame)
 forfeitBtn:SetWidth(12)
 forfeitBtn:SetHeight(12)
-forfeitBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 6)
+forfeitBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 14)
 local forfeitTex = forfeitBtn:CreateTexture(nil, "ARTWORK")
 forfeitTex:SetAllPoints(forfeitBtn)
 forfeitTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\forfeit.blp")
@@ -379,9 +673,11 @@ pauseBtn:SetScript("OnClick", function()
     pcall(function() C_ChallengeMode.Pause() end)
 end)
 pauseBtn:SetScript("OnEnter", function(self)
+    local ok, v = pcall(function() return C_ChallengeMode.IsPaused() end)
+    local label = (ok and v) and "Снять паузу" or "Поставить паузу"
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
-    GameTooltip:AddLine("Поставить паузу", 1, 1, 0.4, 1)
+    GameTooltip:AddLine(label, 1, 1, 0.4, 1)
     GameTooltip:Show()
 end)
 pauseBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -404,7 +700,7 @@ collapseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\minus.blp")
 local forfeitSmall = CreateFrame("Button", nil, frame)
 forfeitSmall:SetWidth(10)
 forfeitSmall:SetHeight(10)
-forfeitSmall:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -6)
+forfeitSmall:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -4)
 forfeitSmall:Hide()
 local forfeitSmallTex = forfeitSmall:CreateTexture(nil, "ARTWORK")
 forfeitSmallTex:SetAllPoints(forfeitSmall)
@@ -432,9 +728,11 @@ pauseSmall:SetScript("OnClick", function()
     pcall(function() C_ChallengeMode.Pause() end)
 end)
 pauseSmall:SetScript("OnEnter", function(self)
+    local ok, v = pcall(function() return C_ChallengeMode.IsPaused() end)
+    local label = (ok and v) and "Снять паузу" or "Поставить паузу"
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
-    GameTooltip:AddLine("Поставить паузу", 1, 1, 0.4, 1)
+    GameTooltip:AddLine(label, 1, 1, 0.4, 1)
     GameTooltip:Show()
 end)
 pauseSmall:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -483,6 +781,7 @@ local function SetCollapsed(isCollapsed)
         frame.forces:Hide()
         frame.forcesBarContainer:Hide()
         frame.deaths:Hide()
+        frame.pauseLabel:Hide()
         forfeitBtn:Hide()
         pauseBtn:Hide()
         forfeitSmall:Show()
@@ -501,8 +800,27 @@ local function SetCollapsed(isCollapsed)
         local timerStr
         if active and state.elapsed then
             local lvlStr  = state.level and ("+" .. state.level) or "?"
-            local dungeon = state.dungeonName or ""
-            timerStr = string.format("%s  %s  %s", FormatTime(state.elapsed), lvlStr, dungeon)
+            local dungeon = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
+            local collapsedTime
+            local isReverse = MPT.db and MPT.db.reverseTimer
+            local dOkC, dC, tC = pcall(function() return C_ChallengeMode.GetDeathCount() end)
+            local deathLostC = 0
+            if dOkC and type(dC) == "number" then
+                deathLostC = type(tC) == "number" and tC or (dC * 5)
+            end
+            local effC = state.elapsed + deathLostC
+            if isReverse then
+                collapsedTime = FormatTime(effC)
+            else
+                local limit2c = GetPlus2Plus3Limits()
+                local baseC = limit2c and math.floor(limit2c / 0.80 + 0.5)
+                collapsedTime = baseC and FormatCountdown(baseC - effC) or FormatTime(effC)
+            end
+            timerStr = string.format("%s  %s  %s", collapsedTime, lvlStr, dungeon)
+            local okP, isPausedCollapsed = pcall(function() return C_ChallengeMode.IsPaused() end)
+            if okP and isPausedCollapsed then
+                timerStr = timerStr .. "  |cffff0000Пауза|r"
+            end
         else
             -- Статический режим (превью или ожидание): берём текущий текст таймера + заголовок
             local timerText = frame.timer:GetText()
@@ -580,7 +898,7 @@ titleTooltipFrame:SetPoint("TOPLEFT",  frame, "TOPLEFT",  0, 0)
 titleTooltipFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, -64)
 titleTooltipFrame:EnableMouse(true)
 titleTooltipFrame:SetScript("OnMouseDown", function(_, button)
-    if button == "LeftButton" then frame:StartMoving() end
+    if button == "LeftButton" and not (MPT.db and MPT.db.locked) then frame:StartMoving() end
 end)
 titleTooltipFrame:SetScript("OnMouseUp", function()
     frame:StopMovingOrSizing()
@@ -647,7 +965,7 @@ affixTooltipFrame:SetPoint("TOPLEFT",  frame, "TOPLEFT",  0, -22)
 affixTooltipFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, -64)
 affixTooltipFrame:EnableMouse(true)
 affixTooltipFrame:SetScript("OnMouseDown", function(_, button)
-    if button == "LeftButton" then frame:StartMoving() end
+    if button == "LeftButton" and not (MPT.db and MPT.db.locked) then frame:StartMoving() end
 end)
 affixTooltipFrame:SetScript("OnMouseUp", function()
     frame:StopMovingOrSizing()
@@ -693,8 +1011,13 @@ local function UpdateBossLayout(count, bossTopY)
         end
         forcesY = y - 2
     end
-    -- deathsY: под баром + 10px зазор
-    deathsY = forcesY - FORCES_BAR_H - 10
+    -- deathsY: под баром/текстом + зазор
+    if frame.forcesBarContainer:IsShown() then
+        deathsY = forcesY - FORCES_BAR_H - 10
+    else
+        -- бар скрыт — текст forces занимает ~14px, даём 6px зазор
+        deathsY = forcesY - 14 - 6
+    end
 
     frame.forces:ClearAllPoints()
     frame.forces:SetPoint("TOPLEFT",  frame, "TOPLEFT",  8, forcesY)
@@ -727,7 +1050,7 @@ end
 -- Разрешено только в режиме превью (не во время активного ключа)
 -- ============================================================
 frame:SetScript("OnMouseDown", function(self, button)
-    if button == "LeftButton" and not state.running and not state.completed then
+    if button == "LeftButton" and not state.running and not state.completed and not (MPT.db and MPT.db.locked) then
         self:StartMoving()
     end
 end)
@@ -817,9 +1140,38 @@ end
 -- Обновление UI
 -- ============================================================
 UpdateDisplay = function()
-    if state.running then
-        state.elapsed = GetTime() - state.startTime
+    local isPaused = false
+    if state.running and C_ChallengeMode and C_ChallengeMode.IsPaused then
+        local ok, v = pcall(function() return C_ChallengeMode.IsPaused() end)
+        isPaused = ok and v == true
     end
+
+    if state.running then
+        if isPaused then
+            state.wasPaused = true
+            -- elapsed не обновляем — время заморожено
+        else
+            if state.wasPaused then
+                state.startTime = GetTime() - state.elapsed
+                state.wasPaused = false
+            end
+            state.elapsed = GetTime() - state.startTime
+        end
+    end
+
+    -- Метка "Пауза" справа от таймера
+    if state.running and isPaused then
+        frame.pauseLabel:Show()
+    else
+        frame.pauseLabel:Hide()
+    end
+
+    -- Иконка кнопки паузы: pause.blp ↔ resume.blp
+    local pauseIcon = (state.running and isPaused)
+        and "Interface\\AddOns\\MythicPlusTimer\\Media\\resume.blp"
+        or  "Interface\\AddOns\\MythicPlusTimer\\Media\\pause.blp"
+    pauseTex:SetTexture(pauseIcon)
+    pauseSmallTex:SetTexture(pauseIcon)
 
     -- Смерти: сначала пробуем API, fallback — локальный счётчик из ASMSG
     local deathCount, deathLost = 0, 0
@@ -841,23 +1193,34 @@ UpdateDisplay = function()
     end
     local effElapsed = (state.elapsed or 0) + deathLost
 
-    -- Таймер: elapsed+deaths / baseLimit
+    -- Таймер
+    local useReverse = MPT.db and MPT.db.reverseTimer
     local active = state.running or state.completed
     if active and state.elapsed then
-        local elapsedStr = FormatTime(effElapsed)
-        local limitStr   = baseLimit and FormatTime(baseLimit) or nil
-        local timerText  = limitStr and (elapsedStr .. "/" .. limitStr) or elapsedStr
-
+        local timerText
         local overBase = baseLimit and (effElapsed > baseLimit)
-        if state.completed then
-            if overBase then
-                frame.timer:SetTextColor(1, 0.2, 0.2)
+        if useReverse then
+            -- Обратный режим (текущий): elapsed+deaths / baseLimit
+            local elapsedStr = FormatTime(effElapsed)
+            local limitStr   = baseLimit and FormatTime(baseLimit) or nil
+            timerText = limitStr and (elapsedStr .. "/" .. limitStr) or elapsedStr
+        else
+            -- Прямой режим: убывает от лимита к 0, затем отрицательный
+            if baseLimit then
+                local remaining = baseLimit - effElapsed
+                timerText = FormatCountdown(remaining)
             else
-                frame.timer:SetTextColor(0.2, 1, 0.2)
+                timerText = FormatTime(effElapsed)
             end
+        end
+
+        if state.completed then
+            frame.timer:SetTextColor(overBase and 1 or 0.2, overBase and 0.2 or 1, 0.2)
             frame.timer:SetText(timerText .. " [done]")
         else
-            if overBase then
+            if not useReverse and baseLimit and (baseLimit - effElapsed) < 0 then
+                frame.timer:SetTextColor(1, 0.2, 0.2)
+            elseif overBase then
                 frame.timer:SetTextColor(1, 0.2, 0.2)
             else
                 frame.timer:SetTextColor(1, 1, 1)
@@ -869,12 +1232,16 @@ UpdateDisplay = function()
         frame.timer:SetText("--:--")
     end
 
-    -- В свёрнутом режиме показываем "12:10  +15  Данж" в заголовке
+    -- В свёрнутом режиме показываем "12:10  +15  Данж" в заголовке (+ "Пауза" если пауза)
     if collapsed then
         if active and state.elapsed then
             local lvlStr  = state.level and ("+" .. state.level) or "?"
-            local dungeon = state.dungeonName or ""
-            frame.title:SetText(string.format("%s  %s  %s", FormatTime(effElapsed), lvlStr, dungeon))
+            local dungeon = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
+            local titleStr = string.format("%s  %s  %s", FormatTime(effElapsed), lvlStr, dungeon)
+            if isPaused then
+                titleStr = titleStr .. "  |cffff0000Пауза|r"
+            end
+            frame.title:SetText(titleStr)
         else
             frame.title:SetText(lastTitleText)
         end
@@ -886,20 +1253,42 @@ UpdateDisplay = function()
     if active and state.elapsed and (limit2 or limit3) then
         if limit2 then
             showPlus2 = true
-            local rem = limit2 - effElapsed
-            if rem < 0 then
-                frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(limit2)))
+            if useReverse then
+                -- Обратный: показываем абсолютный лимит, серый если просрочен
+                local rem = limit2 - effElapsed
+                if rem < 0 then
+                    frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(limit2)))
+                else
+                    frame.plus2:SetText(string.format("+2 (%s)", FormatTime(limit2)))
+                end
             else
-                frame.plus2:SetText(string.format("+2 (%s)", FormatTime(limit2)))
+                -- Прямой: показываем на какой минуте убывающего таймера наступит дедлайн
+                local deadline = baseLimit and (baseLimit - limit2) or 0
+                local remaining = baseLimit and (baseLimit - effElapsed) or 0
+                if remaining < deadline then
+                    frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(deadline)))
+                else
+                    frame.plus2:SetText(string.format("+2 (%s)", FormatTime(deadline)))
+                end
             end
         end
         if limit3 then
             showPlus3 = true
-            local rem = limit3 - effElapsed
-            if rem < 0 then
-                frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(limit3)))
+            if useReverse then
+                local rem = limit3 - effElapsed
+                if rem < 0 then
+                    frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(limit3)))
+                else
+                    frame.plus3:SetText(string.format("+3 (%s)", FormatTime(limit3)))
+                end
             else
-                frame.plus3:SetText(string.format("+3 (%s)", FormatTime(limit3)))
+                local deadline = baseLimit and (baseLimit - limit3) or 0
+                local remaining = baseLimit and (baseLimit - effElapsed) or 0
+                if remaining < deadline then
+                    frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(deadline)))
+                else
+                    frame.plus3:SetText(string.format("+3 (%s)", FormatTime(deadline)))
+                end
             end
         end
     end
@@ -921,7 +1310,7 @@ UpdateDisplay = function()
         if engagedForcesTotal >= 0.05 then
             local engagedCount = 0
             for _ in pairs(engagedGuids) do engagedCount = engagedCount + 1 end
-            baseText = baseText .. string.format(" +%.2f%% (%d)", engagedForcesTotal, engagedCount)
+            baseText = baseText .. string.format(" |cff00ff00+ %.2f%% (%d)|r", engagedForcesTotal, engagedCount)
         end
         if useBar then
             frame.forcesBar:SetValue(math.min(forces, 100))
@@ -940,8 +1329,9 @@ UpdateDisplay = function()
 
     -- Смерти
     if deathCount > 0 then
+        local deathSign = useReverse and "+" or "-"
         frame.deaths:SetText(string.format(
-            "|cffff4444Смертей: %d (+%dс)|r", deathCount, deathLost))
+            "Смертей: %d |cffff4444(%s%dс)|r", deathCount, deathSign, deathLost))
     else
         frame.deaths:SetText("|cff888888Смертей: 0|r")
     end
@@ -1010,21 +1400,33 @@ local sirusTrackerFrames = {
     "ObjectiveTrackerFrame",
 }
 local sirusTrackerWasShown = {}
+local sirusTrackerSuppressed = false  -- пока true — перехватываем Show()
 
 local function HideSirusTracker()
+    sirusTrackerSuppressed = true
     for _, name in ipairs(sirusTrackerFrames) do
         local f = _G[name]
         if f and type(f.IsShown) == "function" then
             local ok, shown = pcall(function() return f:IsShown() end)
             sirusTrackerWasShown[name] = ok and shown or false
-            if ok and shown then
-                pcall(function() f:Hide() end)
+            -- Вешаем OnShow-хук чтобы перехватывать повторные Show() от Sirus
+            if f.HookScript and not f.__mptHooked then
+                f.__mptHooked = true
+                pcall(function()
+                    f:HookScript("OnShow", function(self)
+                        if sirusTrackerSuppressed then
+                            self:Hide()
+                        end
+                    end)
+                end)
             end
+            pcall(function() f:Hide() end)
         end
     end
 end
 
 local function RestoreSirusTracker()
+    sirusTrackerSuppressed = false
     for _, name in ipairs(sirusTrackerFrames) do
         if sirusTrackerWasShown[name] then
             local f = _G[name]
@@ -1191,7 +1593,7 @@ function MPT:StartTimer()
 
     -- Заголовок: "+15 — Кузня Крови"
     local lvlStr = state.level and ("+" .. state.level) or "?"
-    local name   = state.dungeonName or ""
+    local name   = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
     lastTitleText = string.format("|cffffff00%s|r \226\128\148 %s", lvlStr, name)
     frame.title:SetText(lastTitleText)
 
@@ -1274,24 +1676,43 @@ function MPT:ShowPreview()
 
     lastTitleText = "|cffffff00+15|r \226\128\148 Кузня Крови"
     frame.title:SetText(lastTitleText)
-    -- Аффиксы превью
+    -- Аффиксы превью: 4 иконки с разными способами скругления для теста
     local previewAffixIDs = { 10, 2, 12, 3 }
     self:RefreshAffixes(previewAffixIDs)
-
     frame.timer:SetTextColor(1, 1, 1)
-    frame.timer:SetText("12:44/35:00")
-    frame.plus2:SetText("+2 (28:00)")
-    frame.plus3:SetText("+3 (22:24)")
+    if MPT.db and MPT.db.reverseTimer then
+        frame.timer:SetText("12:44/35:00")
+        frame.plus2:SetText("+2 (28:00)")
+        frame.plus3:SetText("+3 (22:24)")
+    else
+        -- base=35:00, elapsed=12:44 → remaining=22:16
+        -- deadline+2 = 35:00-28:00 = 7:00, deadline+3 = 35:00-22:24 = 12:36
+        frame.timer:SetText("22:16")
+        frame.plus2:SetText("+2 (7:00)")
+        frame.plus3:SetText("+3 (12:36)")
+    end
 
     -- Боссы: берём из статической базы для Кузни Крови
     local previewDungeon = "Кузня Крови"
     local previewBossList = self:GetDungeonBosses(previewDungeon) or {}
     local previewTexts = {}
+    local showRecord = true
+    if MPT.db and MPT.db.showBossRecord ~= nil then
+        showRecord = not not MPT.db.showBossRecord
+    end
     for j, bossName in ipairs(previewBossList) do
         if j == 1 then
-            previewTexts[j] = string.format("|cff888888[+] %s  2:03 (Рекорд 1:59, +0:04)|r", bossName)
+            if showRecord then
+                previewTexts[j] = string.format("|cff888888[+] %s  2:03 (Рекорд 1:59, +0:04)|r", bossName)
+            else
+                previewTexts[j] = string.format("|cff888888[+] %s  2:03|r", bossName)
+            end
         elseif j == 2 then
-            previewTexts[j] = string.format("|cff888888[+] %s  4:51 (Рекорд 4:20, +0:31)|r", bossName)
+            if showRecord then
+                previewTexts[j] = string.format("|cff888888[+] %s  4:51 (Рекорд 4:20, +0:31)|r", bossName)
+            else
+                previewTexts[j] = string.format("|cff888888[+] %s  4:51|r", bossName)
+            end
         else
             previewTexts[j] = string.format("[ ] %s  \226\128\148", bossName)
         end
@@ -1312,15 +1733,17 @@ function MPT:ShowPreview()
 
     local useForcesBar = MPT.db and MPT.db.forcesBar
     SetForcesMode(useForcesBar)
-    -- Превью прогресса: 34.1% уже убито и показан пример спуленного пака
-    -- с +5.40% и 7 мобами, как в реальном режиме ("+X.XX% (N)").
     if useForcesBar then
-        frame.forcesBar:SetValue(34.1)
-        frame.forcesBar.text:SetText("34.1% +5.40% (7)")
+        frame.forcesBar:SetValue(70)
+        frame.forcesBar.text:SetText("70.0% |cff00ff00+ 5.40% (7)|r")
     else
-        frame.forces:SetText("Убито врагов: 34.1% +5.40% (7)")
+        frame.forces:SetText("Убито врагов: 70.0% |cff00ff00+5.40% (7)|r")
     end
-    frame.deaths:SetText("|cffff4444Смертей: 2 (+10с)|r")
+    if MPT.db and MPT.db.reverseTimer then
+        frame.deaths:SetText("Смертей: 2 |cffff4444(+10с)|r")
+    else
+        frame.deaths:SetText("Смертей: 2 |cffff4444(-10с)|r")
+    end
 
     frame:Show()
 end
@@ -1339,26 +1762,31 @@ end
 
 -- ============================================================
 -- Рекорды боссов: лучшее время боя (fd).
--- Хранятся в MPT.db.bossRecords[dungeonName][bossName]
+-- Хранятся в MPT.db.bossRecords[dungeonName][keystoneLevel][bossName]
 -- ============================================================
 local function GetBossRecord(bossName)
     if not MPT.db or not MPT.db.bossRecords then return nil end
     local dn = state.dungeonName
-    if not dn then return nil end
+    local lv = state.level
+    if not dn or not lv then return nil end
     local dr = MPT.db.bossRecords[dn]
-    return dr and dr[bossName] or nil
+    local lr = dr and dr[lv]
+    return lr and lr[bossName] or nil
 end
 
 local function UpdateBossRecord(bossName, fightDuration)
-    if not MPT.db or not state.dungeonName then return end
+    if not MPT.db or not state.dungeonName or not state.level then return end
     if not MPT.db.bossRecords then MPT.db.bossRecords = {} end
     local records = MPT.db.bossRecords
     local dn = state.dungeonName
+    local lv = state.level
     if not records[dn] then records[dn] = {} end
     local dnRec = records[dn]
-    local rec = dnRec[bossName]
+    if not dnRec[lv] then dnRec[lv] = {} end
+    local lvRec = dnRec[lv]
+    local rec = lvRec[bossName]
     if not rec then
-        dnRec[bossName] = { fd = fightDuration }
+        lvRec[bossName] = { fd = fightDuration }
     elseif fightDuration and (not rec.fd or fightDuration < rec.fd) then
         rec.fd = fightDuration
     end
@@ -1389,7 +1817,11 @@ UpdateBossDisplay = function()
             if fd then
                 local fdStr = FormatTime(fd)
                 local rec   = GetBossRecord(boss.name)
-                if rec and rec.fd then
+                local showRecord = true
+                if MPT.db and MPT.db.showBossRecord ~= nil then
+                    showRecord = not not MPT.db.showBossRecord
+                end
+                if rec and rec.fd and showRecord then
                     local delta = FormatDelta(fd, rec.fd)
                     line = string.format("|cff888888[+] %s  %s (Рекорд %s, %s)|r",
                         boss.name, fdStr, FormatTime(rec.fd), delta)
@@ -1424,6 +1856,7 @@ local evFrame = CreateFrame("Frame")
 evFrame:RegisterEvent("CHALLENGE_MODE_START")       -- fallback (на Sirus скорее всего не стреляет)
 evFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")   -- завершение ключа
 evFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+evFrame:RegisterEvent("PLAYER_REGEN_ENABLED")       -- выход из боя → сбрасываем engaged
 evFrame:RegisterEvent("CHAT_MSG_ADDON")             -- ASMSG_INSTANCE_ENCOUNTERS_STATE — список боссов
 evFrame:RegisterEvent("BOSS_KILL")                  -- убийство босса
 evFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED") -- агро и смерти мобов
@@ -1462,6 +1895,12 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         end
         -- При любом PLAYER_ENTERING_WORLD во время активного ключа (respawn после вайпа)
         -- сбрасываем engaged таблицу — все мобы на паке уже мертвы или сброшены
+        if state.running then
+            ClearEngaged()
+        end
+
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        -- Вышли из боя — все engaged мобы либо убиты, либо сброшены
         if state.running then
             ClearEngaged()
         end
@@ -1526,14 +1965,10 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         if not state.running then return end
-        local _, eventType, a3, _, _, a6, a7, a8, a9 = ...
-        -- Определяем WotLK vs Cata+ формат по третьему аргументу
-        local destGUID, destFlags
-        if type(a3) == "boolean" then
-            destGUID, destFlags = a7, a9   -- Cata+: hideCaster=a3
-        else
-            destGUID, destFlags = a6, a8   -- WotLK
-        end
+        -- WotLK 3.3.5: 1=timestamp, 2=event, 3=sourceGUID, 4=sourceName, 5=sourceFlags, 6=destGUID, 7=destName, 8=destFlags
+        local eventType = select(2, ...)
+        local destGUID  = select(6, ...)
+        local destFlags = select(8, ...)
 
         -- Фильтр: только враждебные/нейтральные NPC (не питомцы, не стражи)
         local function isHostileNpc(flags)
@@ -1552,10 +1987,8 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         end
 
         if eventType == "UNIT_DIED" or eventType == "PARTY_KILL" then
-            -- Моб убит — убираем из engaged
-            if isHostileNpc(destFlags) then
-                DisengageGuid(destGUID)
-            end
+            -- Моб убит — убираем из engaged (вызываем всегда: если GUID не в таблице, DisengageGuid ничего не сделает)
+            DisengageGuid(destGUID)
         elseif eventType == "SWING_DAMAGE" or eventType == "SPELL_DAMAGE"
             or eventType == "RANGE_DAMAGE" or eventType == "SPELL_PERIODIC_DAMAGE" then
             -- Первый хит по мобу — считаем его вступившим в бой

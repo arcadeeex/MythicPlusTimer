@@ -6,7 +6,6 @@
 local MPT = MythicPlusTimer
 
 local KEYSTONE_ITEM_ID = 374584
-local lastWorldEnterTime = 0
 local pendingSlotTime = nil
 
 -- Ищет ключ в сумках и возвращает bag, slot (или nil, nil если не найден)
@@ -63,42 +62,12 @@ end
 
 local ksFrame = CreateFrame("Frame")
 
--- Sirus отправляет ASMSG_* как обычные события (не CHAT_MSG_ADDON)
-ksFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-ksFrame:RegisterEvent("GOSSIP_SHOW")
+-- Реагируем только на одно событие открытия окна мифика
 pcall(function() ksFrame:RegisterEvent("CHAT_MSG_ADDON") end)
-pcall(function() ksFrame:RegisterEvent("ASMSG_CHALLENGE_MODE_KEYSTONE_RECEPTABLE_OPEN") end)
-pcall(function() ksFrame:RegisterEvent("CHALLENGE_MODE_KEYSTONE_RECEPTACLE_OPEN") end)
-pcall(function() ksFrame:RegisterEvent("CHALLENGE_MODE_KEYSTONE_OPENED") end)
 
-ksFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
-    if event == "PLAYER_ENTERING_WORLD" then
-        lastWorldEnterTime = GetTime() or 0
-        return
-    end
-
-    if event == "GOSSIP_SHOW" then
-        -- Игнорируем авто-срабатывание сразу после входа в мир,
-        -- но реагируем на реальные клики по чаше.
-        local now = GetTime() or 0
-        if now - lastWorldEnterTime < 5 then
-            return
-        end
-        pendingSlotTime = now + 0.1
-
-    elseif event == "CHAT_MSG_ADDON" then
-        -- CHAT_MSG_ADDON: arg1=prefix, arg2=message
-        local prefix = tostring(arg1 or "")
-        local message = tostring(arg2 or "")
-        if prefix == "ASMSG_CHALLENGE_MODE_KEYSTONE_RECEPTABLE_OPEN"
-            or prefix:find("KEYSTONE_RECEPT", 1, true)
-            or message:find("KEYSTONE_RECEPT", 1, true) then
-            pendingSlotTime = (GetTime() or 0) + 0.1
-        end
-
-    elseif event == "ASMSG_CHALLENGE_MODE_KEYSTONE_RECEPTABLE_OPEN"
-        or event == "CHALLENGE_MODE_KEYSTONE_RECEPTACLE_OPEN"
-        or event == "CHALLENGE_MODE_KEYSTONE_OPENED" then
+ksFrame:SetScript("OnEvent", function(_, event, subEvent)
+    if event == "CHAT_MSG_ADDON" and subEvent == "ASMSG_CHALLENGE_MODE_KEYSTONE_RECEPTABLE_OPEN" then
+        -- Небольшая задержка, чтобы окно успело полностью открыться
         pendingSlotTime = (GetTime() or 0) + 0.1
     end
 end)

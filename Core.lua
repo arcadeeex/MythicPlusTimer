@@ -12,7 +12,12 @@ local DB_DEFAULTS = {
     affixText    = true,
     scale        = 1.0,
     forcesBar    = false,
+    forcesColor  = { r = 0.25, g = 0.55, b = 1.0 },
+    showBossRecord = true,
     autoKeystone = false,
+    reverseTimer = false,
+    forcesTexture = "Blank",
+    font = "Friz Quadrata (default)",
 }
 
 local CHAR_DB_DEFAULTS = {}
@@ -52,6 +57,8 @@ function MPT:Init()
     if self.LoadTimerPosition then
         self:LoadTimerPosition()
     end
+    if self.RefreshForcesTexture then self:RefreshForcesTexture() end
+    if self.RefreshFont           then self:RefreshFont()          end
 end
 
 function MPT:Print(msg)
@@ -119,7 +126,15 @@ SlashCmdList["MPT"] = function(msg)
         end
         if found == 0 then MPT:Print("Ничего не найдено. Попробуй во время активного ключа.") end
 
+    elseif cmd == "resdebug" then
+        -- Дебаг воскрешений в бою: C_ChallengeMode и фреймы с текстом (сердечко/цифра)
+        if MPT.DumpResurrectionSources then
+            MPT:DumpResurrectionSources()
+        else
+            MPT:Print("DataCollector не загружен — DumpResurrectionSources недоступен.")
+        end
+
     else
-        MPT:Print("Команды: /mpt debug | reset | timer | preview | kills | findframes")
+        MPT:Print("Команды: /mpt debug | reset | timer | preview | kills | findframes | resdebug")
     end
 end
