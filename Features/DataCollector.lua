@@ -288,8 +288,12 @@ local function TakeSnapshot(label)
         end
     end
 
-    -- Сохраняем снапшот
+    -- Сохраняем снапшот (держим только последние, чтобы не раздувать SavedVariables)
     table.insert(MPT.db.snapshots, snap)
+    local MAX_SNAPSHOTS = 10
+    while #MPT.db.snapshots > MAX_SNAPSHOTS do
+        table.remove(MPT.db.snapshots, 1)
+    end
 
     if MPT.db.debug then
         MPT:Print(string.format("Снапшот #%d сохранён: %s", #MPT.db.snapshots, label))
@@ -412,6 +416,10 @@ local MAX_KILL_DEBUG = 30
 -- Последнее значение полоски прогресса (для дельты при обучении по убийствам).
 -- Должно обновляться часто (0.15 с), иначе дельта при убийстве будет включать несколько мобов.
 local lastForcesBar = 0
+-- Очередь NPC для отложенного обучения: полоска прогресса обновляется после убийства с задержкой,
+-- поэтому учим не в момент UNIT_DIED, а когда в тикере увидим изменение бара.
+local pendingLearnQueue = {}
+local MAX_PENDING_LEARN = 30
 
 -- Периодический сбор данных во время ключа (каждые 30 сек) + частое обновление lastForcesBar (0.15 с)
 local ticker = CreateFrame("Frame")
@@ -424,11 +432,25 @@ ticker:SetScript("OnUpdate", function(self, elapsed)
     lastTick = lastTick + elapsed
     forcesUpdateThrottle = forcesUpdateThrottle + elapsed
     local inKey = C_ChallengeMode.IsChallengeModeActive() or IsInMythicDungeon()
-    -- Частое обновление lastForcesBar, чтобы при событии смерти дельта = текущий - lastForcesBar была ровно за этого моба
+    -- Частое обновление lastForcesBar + отложенное обучение: полоска обновляется после убийства с задержкой,
+    -- поэтому при изменении бара списываем дельту на первого NPC из очереди убийств.
     if inKey and forcesUpdateThrottle >= FORCES_UPDATE_INTERVAL then
         forcesUpdateThrottle = 0
         local bar = GetProgressBarValue()
         if bar and type(bar) == "number" then
+            if #pendingLearnQueue > 0 and (bar - lastForcesBar) >= 0 and (bar - lastForcesBar) <= 5 then
+                local delta = bar - lastForcesBar
+                local npcID = table.remove(pendingLearnQueue, 1)
+                if npcID and MPT and MPT.LearnNpcForces then
+                    local pct = (delta < 0.01) and 0 or delta
+                    local knownPct = MPT:GetNpcForces(npcID)
+                    if knownPct == nil then
+                        MPT:LearnNpcForces(npcID, pct)
+                    elseif math.abs(pct - knownPct) > 0.1 then
+                        MPT:LearnNpcForces(npcID, pct, true)
+                    end
+                end
+            end
             lastForcesBar = bar
         end
     end
@@ -469,11 +491,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         if not MPT.db.unknownEvents then MPT.db.unknownEvents = {} end
         table.insert(MPT.db.unknownEvents, { event = event, args = { ... }, t = time() })
+        while #MPT.db.unknownEvents > 20 do table.remove(MPT.db.unknownEvents, 1) end
         return
     end
 
     if event == "CHALLENGE_MODE_START" then
         lastForcesBar = GetProgressBarValue() or 0
+        pendingLearnQueue = {}
         TakeSnapshot("CHALLENGE_MODE_START")
 
     elseif event == "CHALLENGE_MODE_COMPLETED" then
@@ -509,6 +533,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 end
             end
             table.insert(MPT.db.completionDumps, dump)
+            while #MPT.db.completionDumps > 5 do table.remove(MPT.db.completionDumps, 1) end
             if MPT.db.debug then
                 MPT:Print("CHALLENGE_MODE_COMPLETED: данные сохранены в MythicPlusTimerDB.completionDumps")
             end
@@ -522,7 +547,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Захватываем CreatureKilled сразу — данные могут обновиться до следующего тика
         if MPT and MPT.db then
             if not MPT.db.criteriaSnapshots then MPT.db.criteriaSnapshots = {} end
-            if #MPT.db.criteriaSnapshots < 50 then  -- первые 50 убийств
+            while #MPT.db.criteriaSnapshots >= 50 do table.remove(MPT.db.criteriaSnapshots, 1) end
+            if #MPT.db.criteriaSnapshots < 50 then  -- первые 50 убийств в сессии
                 local entry = {
                     t = time(),
                     args = { tostring(select(1,...)), tostring(select(2,...)), tostring(select(3,...)) },
@@ -563,6 +589,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_ENTERING_WORLD" then
         recentKillsDebug = {}
         lastForcesBar = 0
+        pendingLearnQueue = {}
         if C_ChallengeMode.IsChallengeModeActive() or IsInMythicDungeon() then
             TakeSnapshot("RECONNECT_IN_KEY")
         end
@@ -594,25 +621,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local npcID = GetNPCIdFromGUID(destGUID)
         if not npcID or npcID == 0 then return end
 
-        -- Обучение: дельта = текущий прогресс − прогресс до этого убийства = % за этого моба.
-        -- Если дельта 0 — моб не даёт прогресса (0%). Если расходится с базой — используем новое значение.
-        local currentBar = GetProgressBarValue()
-        if currentBar and type(currentBar) == "number" then
-            local delta = currentBar - lastForcesBar
-            -- Всегда обновляем lastForcesBar, чтобы следующее убийство считало дельту от этого момента
-            lastForcesBar = currentBar
-
-            -- Дельта за одного моба обычно 0–2%; >5% — несколько убийств в одном тике или шум, не учим
-            if delta >= 0 and delta <= 5 and MPT and MPT.LearnNpcForces then
-                local pct = (delta < 0.01) and 0 or delta
-                local knownPct = MPT:GetNpcForces(npcID)
-                if knownPct == nil then
-                    MPT:LearnNpcForces(npcID, pct)
-                elseif math.abs(pct - knownPct) > 0.1 then
-                    -- Значение изменилось на сервере — перезаписываем
-                    MPT:LearnNpcForces(npcID, pct, true)
-                end
-            end
+        -- Обучение отложенное: полоска прогресса в UI обновляется после убийства с задержкой (сервер),
+        -- поэтому в момент UNIT_DIED бар ещё старый и дельта = 0. Кладём npcID в очередь; в тикере
+        -- при следующем изменении бара спишем дельту на первого в очереди.
+        if #pendingLearnQueue < MAX_PENDING_LEARN then
+            table.insert(pendingLearnQueue, npcID)
         end
 
         if #recentKillsDebug < MAX_KILL_DEBUG and MPT and MPT.db then
@@ -627,6 +640,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             }
             table.insert(recentKillsDebug, entry)
             table.insert(MPT.db.killLog, entry)
+            while #MPT.db.killLog > 100 do table.remove(MPT.db.killLog, 1) end
             if MPT.db.debug then
                 MPT:Print(string.format("KILL: %s npcID=%d bar=%.2f%%",
                     tostring(destName), npcID, entry.bar or 0))

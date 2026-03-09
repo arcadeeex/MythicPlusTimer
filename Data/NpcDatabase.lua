@@ -196,18 +196,18 @@ local uncertainIDs = {
 local MPT = MythicPlusTimer
 
 -- Получить % прогресса для NPC. Возвращает nil если неизвестен.
--- Приоритет: статическая база (точные) → learnedForces (SavedVariables) → статическая база (приблизительные)
+-- Приоритет: learnedForces (SavedVariables) → статическая база (данные со временем переносят в базу).
 function MPT:GetNpcForces(npcID)
-    local pct = forces[npcID]
-    -- Статическая база, точное значение — наивысший приоритет
-    if pct ~= nil and not approxIDs[npcID] then
-        return pct, false, uncertainIDs[npcID] == true
-    end
-    -- Данные из SavedVariables (пассивное обучение) — точнее приблизительных
+    -- Сначала выученные данные (приоритет; со временем переносятся в статическую базу)
     if self.db and self.db.learnedForces and self.db.learnedForces[npcID] ~= nil then
         return self.db.learnedForces[npcID], false, false
     end
-    -- Статическая база, приблизительное значение
+    -- Затем статическая база: точные значения
+    local pct = forces[npcID]
+    if pct ~= nil and not approxIDs[npcID] then
+        return pct, false, uncertainIDs[npcID] == true
+    end
+    -- Статическая база: приблизительные значения
     if pct ~= nil then
         return pct, true, uncertainIDs[npcID] == true
     end
@@ -221,13 +221,13 @@ function MPT:IsNpcKnown(npcID)
 end
 
 -- Сохранить выученное значение (пассивное обучение).
--- override=true: записать даже если в статической базе есть точное значение
--- (используется когда дельта заметно отличается — сервер поменял проценты).
+-- override=true: записать даже если в статической базе есть точное значение.
+-- Сохраняем в том числе 0 — NPC может не давать прогресса, это нужно отображать.
 function MPT:LearnNpcForces(npcID, pct, override)
     if not self.db then return end
     if not self.db.learnedForces then self.db.learnedForces = {} end
     if not override then
-        -- Не перезаписываем точные данные менее точными
+        -- Не перезаписываем точные данные статической базы менее точными
         if forces[npcID] and not approxIDs[npcID] then return end
     end
     self.db.learnedForces[npcID] = pct

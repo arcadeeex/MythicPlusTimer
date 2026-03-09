@@ -959,10 +959,12 @@ ShowAffixTooltip = function(anchor)
     GameTooltip:Show()
 end
 
--- Невидимый фрейм поверх аффиксов — показывает тултип при наведении
+-- Невидимый фрейм поверх аффиксов — показывает тултип при наведении (текст и/или иконки).
+-- Границы пересчитываются в RefreshAffixes, чтобы покрывать текущий блок аффиксов.
 affixTooltipFrame = CreateFrame("Frame", nil, frame)
 affixTooltipFrame:SetPoint("TOPLEFT",  frame, "TOPLEFT",  0, -22)
 affixTooltipFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, -64)
+affixTooltipFrame:SetFrameLevel(frame:GetFrameLevel() + 5)
 affixTooltipFrame:EnableMouse(true)
 affixTooltipFrame:SetScript("OnMouseDown", function(_, button)
     if button == "LeftButton" and not (MPT.db and MPT.db.locked) then frame:StartMoving() end
@@ -1536,6 +1538,33 @@ function MPT:RefreshAffixes(affixIDs)
             iconFrame:Show()
         end
         frame.affixesIcons:Show()
+    end
+
+    -- Область тултипа аффиксов: покрывает текст и/или иконки (подсказка при наведении)
+    do
+        affixTooltipFrame:ClearAllPoints()
+        local topAnchor, topPoint = frame, "TOPLEFT"
+        local topX, topY = 8, -24
+        local botAnchor, botPoint = frame, "TOPRIGHT"
+        local botX, botY = -8, -24
+        if frame.affixes:IsShown() then
+            topAnchor, topPoint = frame.affixes, "TOPLEFT"
+            topX, topY = -8, 4
+            botAnchor = frame.affixesLine2:IsShown() and frame.affixesLine2 or frame.affixes
+            botPoint = "BOTTOMRIGHT"
+            botX, botY = 8, -4
+        end
+        if frame.affixesIcons:IsShown() then
+            if not frame.affixes:IsShown() then
+                topAnchor, topPoint = frame.affixesIcons, "TOPLEFT"
+                topX, topY = -8, 4
+            end
+            botAnchor = frame.affixesIcons
+            botPoint = "BOTTOMRIGHT"
+            botX, botY = 8, -4
+        end
+        affixTooltipFrame:SetPoint("TOPLEFT",  topAnchor, topPoint, topX, topY)
+        affixTooltipFrame:SetPoint("BOTTOMRIGHT", botAnchor, botPoint, botX, botY)
     end
 
     local bossTopY = UpdateTimerLayout()
