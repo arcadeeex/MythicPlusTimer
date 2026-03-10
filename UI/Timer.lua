@@ -688,7 +688,8 @@ pauseBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 local collapseBtn = CreateFrame("Button", nil, frame)
 collapseBtn:SetWidth(10)
 collapseBtn:SetHeight(10)
-collapseBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+-- Выравнивание по вертикали с заголовком (title: -6, шрифт 13px → центр ~12.5; кнопка 10px → top -8)
+collapseBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -8)
 local collapseTex = collapseBtn:CreateTexture(nil, "ARTWORK")
 collapseTex:SetAllPoints(collapseBtn)
 collapseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\minus.blp")
@@ -700,7 +701,7 @@ collapseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\minus.blp")
 local forfeitSmall = CreateFrame("Button", nil, frame)
 forfeitSmall:SetWidth(10)
 forfeitSmall:SetHeight(10)
-forfeitSmall:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -4)
+forfeitSmall:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -8)
 forfeitSmall:Hide()
 local forfeitSmallTex = forfeitSmall:CreateTexture(nil, "ARTWORK")
 forfeitSmallTex:SetAllPoints(forfeitSmall)
@@ -942,18 +943,6 @@ ShowAffixTooltip = function(anchor)
                 local cleanDesc = desc:gsub("\\n", "\n"):gsub("\\r", "")
                 GameTooltip:AddLine(cleanDesc, 1, 1, 1, 1)
             end
-        end
-    end
-    local limit2, limit3 = GetPlus2Plus3Limits()
-    if (state.running or state.completed) and state.elapsed and (limit2 or limit3) then
-        GameTooltip:AddLine(" ")
-        if limit2 then
-            local rem = math.max(0, limit2 - state.elapsed)
-            GameTooltip:AddLine(string.format("До +2: %s", FormatTime(rem)), 0.6, 1, 0.6, 1)
-        end
-        if limit3 then
-            local rem = math.max(0, limit3 - state.elapsed)
-            GameTooltip:AddLine(string.format("До +3: %s", FormatTime(rem)), 0.6, 1, 0.6, 1)
         end
     end
     GameTooltip:Show()
@@ -1250,46 +1239,47 @@ UpdateDisplay = function()
         return
     end
 
-    -- Строки +2 / +3
+    -- Строки +2 / +3: основной текст + зелёный таймер "осталось до конца" (пока не просрочено)
+    local GREEN_REM = "|cff00ff00"
     local showPlus2, showPlus3 = false, false
     if active and state.elapsed and (limit2 or limit3) then
         if limit2 then
             showPlus2 = true
+            local rem2 = limit2 - effElapsed
             if useReverse then
                 -- Обратный: показываем абсолютный лимит, серый если просрочен
-                local rem = limit2 - effElapsed
-                if rem < 0 then
+                if rem2 < 0 then
                     frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(limit2)))
                 else
-                    frame.plus2:SetText(string.format("+2 (%s)", FormatTime(limit2)))
+                    frame.plus2:SetText(string.format("+2 (%s) %s%s|r", FormatTime(limit2), GREEN_REM, FormatTime(rem2)))
                 end
             else
-                -- Прямой: показываем на какой минуте убывающего таймера наступит дедлайн
-                local deadline = baseLimit and (baseLimit - limit2) or 0
+                -- Прямой: показываем дедлайн убывающего таймера
+                local deadline2 = baseLimit and (baseLimit - limit2) or 0
                 local remaining = baseLimit and (baseLimit - effElapsed) or 0
-                if remaining < deadline then
-                    frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(deadline)))
+                if remaining < deadline2 then
+                    frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(deadline2)))
                 else
-                    frame.plus2:SetText(string.format("+2 (%s)", FormatTime(deadline)))
+                    frame.plus2:SetText(string.format("+2 (%s) %s%s|r", FormatTime(deadline2), GREEN_REM, FormatTime(rem2)))
                 end
             end
         end
         if limit3 then
             showPlus3 = true
+            local rem3 = limit3 - effElapsed
             if useReverse then
-                local rem = limit3 - effElapsed
-                if rem < 0 then
+                if rem3 < 0 then
                     frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(limit3)))
                 else
-                    frame.plus3:SetText(string.format("+3 (%s)", FormatTime(limit3)))
+                    frame.plus3:SetText(string.format("+3 (%s) %s%s|r", FormatTime(limit3), GREEN_REM, FormatTime(rem3)))
                 end
             else
-                local deadline = baseLimit and (baseLimit - limit3) or 0
+                local deadline3 = baseLimit and (baseLimit - limit3) or 0
                 local remaining = baseLimit and (baseLimit - effElapsed) or 0
-                if remaining < deadline then
-                    frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(deadline)))
+                if remaining < deadline3 then
+                    frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(deadline3)))
                 else
-                    frame.plus3:SetText(string.format("+3 (%s)", FormatTime(deadline)))
+                    frame.plus3:SetText(string.format("+3 (%s) %s%s|r", FormatTime(deadline3), GREEN_REM, FormatTime(rem3)))
                 end
             end
         end
@@ -1440,6 +1430,17 @@ local function RestoreSirusTracker()
     end
 end
 
+-- Применить видимость стандартного трекера по настройке (для смены опции во время ключа).
+function MPT:ApplyDefaultTrackerVisibility()
+    if state.running then
+        if self.db and self.db.hideDefaultTracker then
+            HideSirusTracker()
+        else
+            RestoreSirusTracker()
+        end
+    end
+end
+
 function MPT:LoadTimerPosition()
     frame:ClearAllPoints()
     local scale = (self.db and self.db.scale) or 1.0
@@ -1583,7 +1584,9 @@ function MPT:StartTimer()
     state.running   = true
     state.completed = false
     ClearEngaged()
-    HideSirusTracker()
+    if self.db and self.db.hideDefaultTracker then
+        HideSirusTracker()
+    end
     localDeathCount = 0
     localDeathLost  = 0
 
@@ -1623,7 +1626,7 @@ function MPT:StartTimer()
     -- Заголовок: "+15 — Кузня Крови"
     local lvlStr = state.level and ("+" .. state.level) or "?"
     local name   = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
-    lastTitleText = string.format("|cffffff00%s|r \226\128\148 %s", lvlStr, name)
+    lastTitleText = string.format("|cffffff00%s \226\128\148 %s|r", lvlStr, name)
     frame.title:SetText(lastTitleText)
 
     -- Аффиксы
@@ -1667,7 +1670,9 @@ function MPT:StopTimer(completed)
     state.running   = false
     state.completed = completed == true
     ClearEngaged()
-    RestoreSirusTracker()
+    if self.db and self.db.hideDefaultTracker then
+        RestoreSirusTracker()
+    end
     -- Очищаем сохранённое время и боссов — ключ завершён или покинут
     if self.charDb then
         self.charDb.keyStartUnix = nil
@@ -1703,22 +1708,22 @@ function MPT:ShowPreview()
     if collapsed then SetCollapsed(false) end
     self:LoadTimerPosition()
 
-    lastTitleText = "|cffffff00+15|r \226\128\148 Кузня Крови"
+    lastTitleText = "|cffffff00+15 \226\128\148 Кузня Крови|r"
     frame.title:SetText(lastTitleText)
     -- Аффиксы превью: 4 иконки с разными способами скругления для теста
     local previewAffixIDs = { 10, 2, 12, 3 }
     self:RefreshAffixes(previewAffixIDs)
     frame.timer:SetTextColor(1, 1, 1)
+    -- Превью: elapsed=12:44 (764 сек), limit2=28:00 (1680), limit3=22:24 (1344) → rem2=15:16, rem3=9:40
     if MPT.db and MPT.db.reverseTimer then
         frame.timer:SetText("12:44/35:00")
-        frame.plus2:SetText("+2 (28:00)")
-        frame.plus3:SetText("+3 (22:24)")
+        frame.plus2:SetText("+2 (28:00) |cff00ff0015:16|r")
+        frame.plus3:SetText("+3 (22:24) |cff00ff009:40|r")
     else
-        -- base=35:00, elapsed=12:44 → remaining=22:16
-        -- deadline+2 = 35:00-28:00 = 7:00, deadline+3 = 35:00-22:24 = 12:36
+        -- base=35:00, elapsed=12:44 → remaining=22:16; deadline+2=7:00, deadline+3=12:36; rem2=15:16, rem3=9:40
         frame.timer:SetText("22:16")
-        frame.plus2:SetText("+2 (7:00)")
-        frame.plus3:SetText("+3 (12:36)")
+        frame.plus2:SetText("+2 (7:00) |cff00ff0015:16|r")
+        frame.plus3:SetText("+3 (12:36) |cff00ff009:40|r")
     end
 
     -- Боссы: берём из статической базы для Кузни Крови

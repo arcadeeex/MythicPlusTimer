@@ -18,6 +18,7 @@ local DB_DEFAULTS = {
     reverseTimer = false,
     forcesTexture = "Blank",
     font = "Friz Quadrata (default)",
+    hideDefaultTracker = false,
 }
 
 local CHAR_DB_DEFAULTS = {}

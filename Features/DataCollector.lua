@@ -448,20 +448,61 @@ ticker:SetScript("OnUpdate", function(self, elapsed)
             if #pendingLearnQueue > 0 then
                 local first = pendingLearnQueue[1]
                 if GetTime() - (first.time or 0) >= LEARN_DELAY then
-                    local barAtKill = first.barAtKill
-                    local delta = bar - (barAtKill or lastForcesBar)
-                    if delta >= 0 and delta <= 5 and MPT and MPT.LearnNpcForces then
-                        local npcID = first.npcID
-                        local pct = (delta < 0.01) and 0 or delta
-                        local knownPct = MPT:GetNpcForces(npcID)
-                        if knownPct == nil then
-                            MPT:LearnNpcForces(npcID, pct)
-                        elseif math.abs(pct - knownPct) > 0.1 then
-                            MPT:LearnNpcForces(npcID, pct, true)
+                    -- Сколько убийств в очереди уже "готовы" (прошло LEARN_DELAY с момента убийства)?
+                    -- Если несколько — дельта относится ко всем сразу, данные невалидны для одного NPC.
+                    local readyCount = 0
+                    for i = 1, #pendingLearnQueue do
+                        if GetTime() - (pendingLearnQueue[i].time or 0) >= LEARN_DELAY then
+                            readyCount = readyCount + 1
+                        else
+                            break
                         end
                     end
-                    lastForcesBar = bar
-                    table.remove(pendingLearnQueue, 1)
+                    if readyCount > 1 then
+                        -- Проверяем: все ли готовые убийства — один и тот же npcID?
+                        local sameId = true
+                        local firstId = first.npcID
+                        for i = 2, readyCount do
+                            if pendingLearnQueue[i].npcID ~= firstId then
+                                sameId = false
+                                break
+                            end
+                        end
+                        if sameId then
+                            -- Одинаковые NPC: дельта на всех, делим на количество — получаем % за одного.
+                            local barAtKill = first.barAtKill
+                            local deltaTotal = bar - (barAtKill or lastForcesBar)
+                            local pct = (deltaTotal < 0.01) and 0 or (deltaTotal / readyCount)
+                            if pct >= 0 and pct <= 5 and MPT and MPT.LearnNpcForces then
+                                local knownPct = MPT:GetNpcForces(firstId)
+                                if knownPct == nil then
+                                    MPT:LearnNpcForces(firstId, pct)
+                                elseif math.abs(pct - knownPct) > 0.1 then
+                                    MPT:LearnNpcForces(firstId, pct, true)
+                                end
+                            end
+                        end
+                        -- Удаляем весь батч из очереди (после обучения по sameId или без обучения при разных ID).
+                        for _ = 1, readyCount do
+                            table.remove(pendingLearnQueue, 1)
+                        end
+                        lastForcesBar = bar
+                    else
+                        local barAtKill = first.barAtKill
+                        local delta = bar - (barAtKill or lastForcesBar)
+                        if delta >= 0 and delta <= 5 and MPT and MPT.LearnNpcForces then
+                            local npcID = first.npcID
+                            local pct = (delta < 0.01) and 0 or delta
+                            local knownPct = MPT:GetNpcForces(npcID)
+                            if knownPct == nil then
+                                MPT:LearnNpcForces(npcID, pct)
+                            elseif math.abs(pct - knownPct) > 0.1 then
+                                MPT:LearnNpcForces(npcID, pct, true)
+                            end
+                        end
+                        lastForcesBar = bar
+                        table.remove(pendingLearnQueue, 1)
+                    end
                 end
             else
                 lastForcesBar = bar

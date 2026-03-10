@@ -504,9 +504,29 @@ optInitFrame:SetScript("OnEvent", function(self)
         end
     end)
 
+    -- Чекбокс: Скрывать стандартный интерфейс ключа
+    local hideDefaultTrackerCheck = CreateFrame("CheckButton", "MPTHideDefaultTrackerCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
+    hideDefaultTrackerCheck:SetPoint("TOPLEFT", reverseTimerCheck, "BOTTOMLEFT", 0, -4)
+
+    local hideDefaultTrackerText = _G["MPTHideDefaultTrackerCheckText"]
+    if hideDefaultTrackerText then
+        hideDefaultTrackerText:SetText("Скрывать стандартный интерфейс")
+    end
+    hideDefaultTrackerCheck.tooltipText = "Скрывать стандартный интерфейс"
+    hideDefaultTrackerCheck.tooltipRequirement = "Скрывает стандартный трекер целей ключа (прогресс, боссы) во время прохождения. Если выключено — оба интерфейса видны."
+
+    hideDefaultTrackerCheck:HookScript("OnClick", function(check)
+        if MPT.db then
+            MPT.db.hideDefaultTracker = check:GetChecked() == 1 or check:GetChecked() == true
+            if MPT.ApplyDefaultTrackerVisibility then
+                MPT:ApplyDefaultTrackerVisibility()
+            end
+        end
+    end)
+
     -- ── Шрифт текста (скроллируемый dropdown) ────────────────────────
     local fontLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    fontLabel:SetPoint("TOPLEFT", reverseTimerCheck, "BOTTOMLEFT", 2, -10)
+    fontLabel:SetPoint("TOPLEFT", hideDefaultTrackerCheck, "BOTTOMLEFT", 2, -10)
     fontLabel:SetText("Шрифт текста:")
 
     local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"
@@ -604,6 +624,9 @@ optInitFrame:SetScript("OnEvent", function(self)
         forcesBarCheck:SetChecked(MPT.db and MPT.db.forcesBar or false)
         autoKeystoneCheck:SetChecked(MPT.db and MPT.db.autoKeystone or false)
         reverseTimerCheck:SetChecked(MPT.db and MPT.db.reverseTimer or false)
+        if hideDefaultTrackerCheck then
+            hideDefaultTrackerCheck:SetChecked(MPT.db and MPT.db.hideDefaultTracker or false)
+        end
         UpdateTexDropFromDB()
         UpdateFontDropFromDB()
         if forcesColorSwatch and forcesColorSwatch:IsShown() then
