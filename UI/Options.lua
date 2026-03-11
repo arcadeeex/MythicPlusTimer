@@ -244,26 +244,9 @@ optInitFrame:SetScript("OnEvent", function(self)
     checkHeader:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -20)
     checkHeader:SetText("Общее")
 
-    -- Чекбокс: Debug режим
-    local debugCheck = CreateFrame("CheckButton", "MPTDebugCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
-    debugCheck:SetPoint("TOPLEFT", checkHeader, "BOTTOMLEFT", -2, -8)
-
-    local debugCheckText = _G["MPTDebugCheckText"]
-    if debugCheckText then
-        debugCheckText:SetText("Debug режим")
-    end
-    debugCheck.tooltipText = "Debug режим"
-    debugCheck.tooltipRequirement = "Выводит отладочную информацию в чат"
-
-    debugCheck:HookScript("OnClick", function(check)
-        if MPT.db then
-            MPT.db.debug = check:GetChecked() == 1 or check:GetChecked() == true
-        end
-    end)
-
     -- Чекбокс: Показать рекорд подземелья
     local recordCheck = CreateFrame("CheckButton", "MPTDungeonRecordCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
-    recordCheck:SetPoint("TOPLEFT", debugCheck, "BOTTOMLEFT", 0, -4)
+    recordCheck:SetPoint("TOPLEFT", checkHeader, "BOTTOMLEFT", -2, -8)
 
     local recordCheckText = _G["MPTDungeonRecordCheckText"]
     if recordCheckText then
@@ -305,9 +288,45 @@ optInitFrame:SetScript("OnEvent", function(self)
         end
     end)
 
-    -- ── Раздел: Аффиксы (под блоком прогресса справа) ───────────────
+    -- Чекбокс: Процент в тултипе NPC
+    local showForcesInTooltipCheck = CreateFrame("CheckButton", "MPTShowForcesInTooltipCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
+    showForcesInTooltipCheck:SetPoint("TOPLEFT", forcesBarCheck, "BOTTOMLEFT", 0, -4)
+
+    local showForcesInTooltipText = _G["MPTShowForcesInTooltipCheckText"]
+    if showForcesInTooltipText then
+        showForcesInTooltipText:SetText("Показывать процент за убийство мобов в тултипе")
+    end
+    showForcesInTooltipCheck.tooltipText = "Процент в тултипе"
+    showForcesInTooltipCheck.tooltipRequirement = "Показывать % прогресса сил при наведении на NPC в M+ подземелье"
+
+    showForcesInTooltipCheck:HookScript("OnClick", function(check)
+        if MPT.db then
+            MPT.db.showForcesInTooltip = check:GetChecked() == 1 or check:GetChecked() == true
+        end
+    end)
+
+    -- Чекбокс: Процент за спуленный пак
+    local showForcesPullPctCheck = CreateFrame("CheckButton", "MPTShowForcesPullPctCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
+    showForcesPullPctCheck:SetPoint("TOPLEFT", showForcesInTooltipCheck, "BOTTOMLEFT", 0, -4)
+
+    local showForcesPullPctText = _G["MPTShowForcesPullPctCheckText"]
+    if showForcesPullPctText then
+        showForcesPullPctText:SetText("Показывать процент за спуленный пак")
+    end
+    showForcesPullPctCheck.tooltipText = "Процент за пак"
+    showForcesPullPctCheck.tooltipRequirement = "Показывать +X.XX% (N) рядом с общим процентом за текущий спуленный пак"
+
+    showForcesPullPctCheck:HookScript("OnClick", function(check)
+        if MPT.db then
+            MPT.db.showForcesPullPct = check:GetChecked() == 1 or check:GetChecked() == true
+            if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then
+                MPT:ShowPreview()
+            end
+        end
+    end)
+
+    -- ── Раздел: Аффиксы (сразу под блоком прогресса справа) ──────────
     local affixHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    affixHeader:SetPoint("TOPLEFT", progressHeader, "BOTTOMLEFT", 0, -162)
     affixHeader:SetText("Аффиксы")
 
     -- Чекбокс: Аффиксы текстом
@@ -346,29 +365,9 @@ optInitFrame:SetScript("OnEvent", function(self)
         end
     end)
 
-    -- Цвет прогресс-бара (отдельной строкой под чекбоксом прогресса)
-    local forcesColorSwatch = CreateFrame("Button", nil, panel)
-    forcesColorSwatch:SetSize(18, 18)
-    forcesColorSwatch:SetPoint("TOPLEFT", forcesBarCheck, "BOTTOMLEFT", 2, -8)
-    -- Рамка вокруг свотча
-    local border = forcesColorSwatch:CreateTexture(nil, "BORDER")
-    border:SetAllPoints()
-    border:SetTexture("Interface\\Buttons\\UI-Quickslot2")
-    forcesColorSwatch.border = border
-    -- Внутренний цветной квадрат
-    local swatchTex = forcesColorSwatch:CreateTexture(nil, "ARTWORK")
-    swatchTex:SetPoint("TOPLEFT", 3, -3)
-    swatchTex:SetPoint("BOTTOMRIGHT", -3, 3)
-    swatchTex:SetTexture("Interface\\BUTTONS\\WHITE8X8")
-    forcesColorSwatch.tex = swatchTex
-
-    local forcesColorLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    forcesColorLabel:SetPoint("LEFT", forcesColorSwatch, "RIGHT", 6, 0)
-    forcesColorLabel:SetText("Цвет прогресс бара")
-
     -- ── Текстура прогресс-бара (скроллируемый dropdown) ──────────────
     local texLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    texLabel:SetPoint("TOPLEFT", forcesColorSwatch, "BOTTOMLEFT", 0, -14)
+    texLabel:SetPoint("TOPLEFT", showForcesPullPctCheck, "BOTTOMLEFT", 0, -8)
     texLabel:SetText("Текстура полосы:")
 
     local texDD = CreateMPTDropDown(panel, 180, 10, MPT.BAR_TEXTURES or {}, function(item)
@@ -422,53 +421,7 @@ optInitFrame:SetScript("OnEvent", function(self)
     resetLearnedBtn:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
-
-    local function UpdateSwatchFromDB()
-        local r, g, b = 0.25, 0.55, 1.0
-        if MPT.db and MPT.db.forcesColor then
-            local c = MPT.db.forcesColor
-            if type(c.r) == "number" and type(c.g) == "number" and type(c.b) == "number" then
-                r, g, b = c.r, c.g, c.b
-            end
-        end
-        swatchTex:SetVertexColor(r, g, b)
-    end
-    UpdateSwatchFromDB()
-
-    forcesColorSwatch:SetScript("OnClick", function()
-        if not ColorPickerFrame then return end
-        local r, g, b = 0.25, 0.55, 1.0
-        if MPT.db and MPT.db.forcesColor then
-            local c = MPT.db.forcesColor
-            if type(c.r) == "number" and type(c.g) == "number" and type(c.b) == "number" then
-                r, g, b = c.r, c.g, c.b
-            end
-        end
-
-        local function setColor(nr, ng, nb)
-            if not MPT.db then return end
-            MPT.db.forcesColor = { r = nr, g = ng, b = nb }
-            UpdateSwatchFromDB()
-            UpdateTexDropFromDB()
-            if MPT.RefreshForcesColor then
-                MPT:RefreshForcesColor()
-            end
-        end
-
-        ColorPickerFrame.func = function()
-            local nr, ng, nb = ColorPickerFrame:GetColorRGB()
-            setColor(nr, ng, nb)
-        end
-        ColorPickerFrame.hasOpacity = false
-        ColorPickerFrame.previousValues = { r, g, b }
-        ColorPickerFrame.cancelFunc = function(prev)
-            local pr, pg, pb = unpack(prev or ColorPickerFrame.previousValues)
-            setColor(pr, pg, pb)
-        end
-        ColorPickerFrame:SetColorRGB(r, g, b)
-        ColorPickerFrame:Hide()
-        ColorPickerFrame:Show()
-    end)
+    affixHeader:SetPoint("TOPLEFT", resetLearnedBtn, "BOTTOMLEFT", 0, -18)
 
     -- Чекбокс: Авто-вставка ключа (в разделе "Общее" слева)
     local autoKeystoneCheck = CreateFrame("CheckButton", "MPTAutoKeystoneCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
@@ -501,6 +454,9 @@ optInitFrame:SetScript("OnEvent", function(self)
     reverseTimerCheck:HookScript("OnClick", function(check)
         if MPT.db then
             MPT.db.reverseTimer = check:GetChecked() == 1 or check:GetChecked() == true
+            if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then
+                MPT:ShowPreview()
+            end
         end
     end)
 
@@ -552,7 +508,7 @@ optInitFrame:SetScript("OnEvent", function(self)
 
     -- ── Кнопка превью (под аффиксами, по центру) ────────────────────
     local previewBtn = CreateFrame("Button", "MPTPreviewBtn", panel, "UIPanelButtonTemplate")
-    previewBtn:SetPoint("BOTTOM", affixIconsCheck, "BOTTOM", 0, -56)
+    previewBtn:SetPoint("BOTTOM", affixIconsCheck, "BOTTOM", 0, -72)
     previewBtn:SetPoint("LEFT", panel, "CENTER", -100, 0)
     previewBtn:SetWidth(140)
     previewBtn:SetHeight(22)
@@ -615,13 +571,14 @@ optInitFrame:SetScript("OnEvent", function(self)
     -- Синхронизация состояния при открытии панели
     panel:SetScript("OnShow", function()
         lockCheck:SetChecked(MPT.db and MPT.db.locked or false)
-        debugCheck:SetChecked(MPT.db and MPT.db.debug or false)
         if recordCheck then
             recordCheck:SetChecked(MPT.db and (MPT.db.showBossRecord ~= false) or false)
         end
         affixTextCheck:SetChecked(MPT.db and MPT.db.affixText or false)
         affixIconsCheck:SetChecked(MPT.db and MPT.db.affixIcons or false)
         forcesBarCheck:SetChecked(MPT.db and MPT.db.forcesBar or false)
+        showForcesInTooltipCheck:SetChecked(MPT.db and MPT.db.showForcesInTooltip ~= false)
+        showForcesPullPctCheck:SetChecked(MPT.db and MPT.db.showForcesPullPct ~= false)
         autoKeystoneCheck:SetChecked(MPT.db and MPT.db.autoKeystone or false)
         reverseTimerCheck:SetChecked(MPT.db and MPT.db.reverseTimer or false)
         if hideDefaultTrackerCheck then
@@ -629,16 +586,6 @@ optInitFrame:SetScript("OnEvent", function(self)
         end
         UpdateTexDropFromDB()
         UpdateFontDropFromDB()
-        if forcesColorSwatch and forcesColorSwatch:IsShown() then
-            local r, g, b = 0.25, 0.55, 1.0
-            if MPT.db and MPT.db.forcesColor then
-                local c = MPT.db.forcesColor
-                if type(c.r) == "number" and type(c.g) == "number" and type(c.b) == "number" then
-                    r, g, b = c.r, c.g, c.b
-                end
-            end
-            forcesColorSwatch.tex:SetVertexColor(r, g, b)
-        end
 
         local scale = (MPT.db and MPT.db.scale) or 1.0
         scaleLabel:SetText(string.format("%.1f", scale))
@@ -650,4 +597,178 @@ optInitFrame:SetScript("OnEvent", function(self)
     end)
 
     InterfaceOptions_AddCategory(panel)
+
+    -- ── Подпункт "Цвета" ─────────────────────────────────────────────
+    local panelColors = CreateFrame("Frame", "MythicPlusTimerColorsOptions")
+    panelColors.name = "Цвета"
+    panelColors.parent = panel.name
+
+    local colorsTitle = panelColors:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    colorsTitle:SetPoint("TOPLEFT", 16, -16)
+    colorsTitle:SetText("Цвета")
+
+    local COLOR_OPTIONS = {
+        { key = "colorTitle",         label = "Цвет названия уровня и названия ключа" },
+        { key = "colorAffixes",       label = "Цвет аффиксов текстом" },
+        { key = "colorTimer",         label = "Цвет таймера" },
+        { key = "colorTimerFailed",   label = "Цвет проваленного таймера" },
+        { key = "colorPlus23",        label = "Цвет таймера на +2/+3" },
+        { key = "colorPlus23Remaining", label = "Цвет времени до окончания +2/+3" },
+        { key = "colorBossPending",   label = "Цвет списка непройденных боссов" },
+        { key = "colorBossKilled",    label = "Цвет пройденного босса" },
+        { key = "colorForcesPct",     label = "Цвет основного процента убитых врагов" },
+        { key = "colorForcesPull",    label = "Цвет процентов за спуленный пак" },
+        { key = "forcesColor",        label = "Цвет прогресс бара" },
+        { key = "colorDeathsIcon",    label = "Цвет иконки количества смертей" },
+        { key = "colorDeaths",        label = "Цвет количества смертей" },
+        { key = "colorDeathsPenalty", label = "Цвет штрафа за смерти" },
+        { key = "colorBattleResIcon", label = "Цвет иконки количества БР" },
+        { key = "colorBattleRes",     label = "Цвет количества БР" },
+        { key = "colorButtons",       label = "Цвет кнопок интерфейса" },
+    }
+
+    -- Живое обновление превью при движении слайдера в ColorPicker
+    local colorPickerLiveFrame = CreateFrame("Frame", nil, panelColors)
+    local colorPickerLiveLast = 0
+    colorPickerLiveFrame:SetScript("OnUpdate", function(_, elapsed)
+        colorPickerLiveLast = colorPickerLiveLast + elapsed
+        if colorPickerLiveLast < 0.05 then return end
+        colorPickerLiveLast = 0
+        if not MPT._colorPickerEditingKey or not ColorPickerFrame or not ColorPickerFrame:IsShown() then
+            MPT._colorPickerEditingKey = nil
+            MPT._colorPickerUpdateSwatch = nil
+            return
+        end
+        local r, g, b = ColorPickerFrame:GetColorRGB()
+        if MPT.db then
+            MPT.db[MPT._colorPickerEditingKey] = { r = r, g = g, b = b }
+        end
+        if MPT._colorPickerUpdateSwatch then MPT._colorPickerUpdateSwatch() end
+        if MPT.RefreshAllColors then MPT:RefreshAllColors() end
+        if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then
+            MPT:ShowPreview()
+        end
+    end)
+
+    local colorSwatches = {}
+    local prevAnchor = colorsTitle
+    local SWATCH_W, SWATCH_H = 30, 20
+    local ROW_SPACING = -8
+    for i, opt in ipairs(COLOR_OPTIONS) do
+        local swatch = CreateFrame("Button", nil, panelColors)
+        swatch:SetSize(SWATCH_W, SWATCH_H)
+        swatch:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, i == 1 and -12 or ROW_SPACING)
+        local border = swatch:CreateTexture(nil, "BORDER")
+        border:SetAllPoints()
+        border:SetTexture("Interface\\Buttons\\UI-Quickslot2")
+        local tex = swatch:CreateTexture(nil, "ARTWORK")
+        tex:SetPoint("TOPLEFT", 4, -4)
+        tex:SetPoint("BOTTOMRIGHT", -4, 4)
+        tex:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        swatch.tex = tex
+        swatch.key = opt.key
+
+        local label = panelColors:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        label:SetPoint("LEFT", swatch, "RIGHT", 8, 0)
+        label:SetText(opt.label)
+        label:SetTextColor(1, 1, 1)
+        local fontPath, _, fontFlags = label:GetFont()
+        label:SetFont(fontPath, 13, fontFlags)
+
+        local function updateThisSwatch()
+            local r, g, b = 1, 1, 1
+            if MPT.db and MPT.db[opt.key] then
+                local c = MPT.db[opt.key]
+                if type(c.r) == "number" and type(c.g) == "number" and type(c.b) == "number" then
+                    r, g, b = c.r, c.g, c.b
+                end
+            elseif MPT.COLOR_DEFAULTS and MPT.COLOR_DEFAULTS[opt.key] then
+                local c = MPT.COLOR_DEFAULTS[opt.key]
+                r, g, b = c.r, c.g, c.b
+            end
+            tex:SetVertexColor(r, g, b)
+        end
+        updateThisSwatch()
+        colorSwatches[i] = { swatch = swatch, update = updateThisSwatch }
+
+        swatch:SetScript("OnClick", function()
+            if not ColorPickerFrame then return end
+            local r, g, b = 1, 1, 1
+            if MPT.db and MPT.db[opt.key] then
+                local c = MPT.db[opt.key]
+                if type(c.r) == "number" and type(c.g) == "number" and type(c.b) == "number" then
+                    r, g, b = c.r, c.g, c.b
+                end
+            elseif MPT.COLOR_DEFAULTS and MPT.COLOR_DEFAULTS[opt.key] then
+                local c = MPT.COLOR_DEFAULTS[opt.key]
+                r, g, b = c.r, c.g, c.b
+            end
+
+            MPT._colorPickerEditingKey = opt.key
+            MPT._colorPickerUpdateSwatch = updateThisSwatch
+
+            local function setColor(nr, ng, nb)
+                if not MPT.db then return end
+                MPT.db[opt.key] = { r = nr, g = ng, b = nb }
+                updateThisSwatch()
+                if MPT.RefreshAllColors then MPT:RefreshAllColors() end
+                if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then
+                    MPT:ShowPreview()
+                end
+                MPT._colorPickerEditingKey = nil
+                MPT._colorPickerUpdateSwatch = nil
+            end
+
+            ColorPickerFrame.func = function()
+                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                setColor(nr, ng, nb)
+            end
+            ColorPickerFrame.hasOpacity = false
+            ColorPickerFrame.previousValues = { r, g, b }
+            ColorPickerFrame.cancelFunc = function(prev)
+                local pr, pg, pb = unpack(prev or ColorPickerFrame.previousValues)
+                setColor(pr, pg, pb)
+            end
+            ColorPickerFrame:SetColorRGB(r, g, b)
+            ColorPickerFrame:Hide()
+            ColorPickerFrame:Show()
+        end)
+
+        prevAnchor = swatch
+    end
+
+    local resetColorsBtn = CreateFrame("Button", nil, panelColors, "UIPanelButtonTemplate")
+    resetColorsBtn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -14)
+    resetColorsBtn:SetWidth(240)
+    resetColorsBtn:SetHeight(22)
+    resetColorsBtn:SetText("Сбросить до дефолтных значений")
+    resetColorsBtn:SetScript("OnClick", function()
+        if not MPT.db or not MPT.COLOR_DEFAULTS then return end
+        for key, def in pairs(MPT.COLOR_DEFAULTS) do
+            MPT.db[key] = { r = def.r, g = def.g, b = def.b }
+        end
+        for _, row in ipairs(colorSwatches) do
+            row.update()
+        end
+        if MPT.RefreshAllColors then MPT:RefreshAllColors() end
+        if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then
+            MPT:ShowPreview()
+        end
+        MPT:Print("Цвета сброшены до значений по умолчанию.")
+    end)
+    resetColorsBtn:SetScript("OnEnter", function(btn)
+        GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Сбросить до дефолтных значений", 1, 1, 1)
+        GameTooltip:AddLine("Восстанавливает все цвета интерфейса таймера к исходным.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    resetColorsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    panelColors:SetScript("OnShow", function()
+        for _, row in ipairs(colorSwatches) do
+            row.update()
+        end
+    end)
+
+    InterfaceOptions_AddCategory(panelColors)
 end)

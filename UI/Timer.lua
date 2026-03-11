@@ -61,6 +61,43 @@ local function ClearEngaged()
 end
 
 -- ============================================================
+-- Цвета из настроек (кастомизация)
+-- ============================================================
+local COLOR_DEFAULTS = {
+    colorTitle         = { r = 1,      g = 0.82,  b = 0 },
+    colorAffixes       = { r = 0.67,   g = 0.67,  b = 0.67 },
+    colorTimer         = { r = 1,      g = 1,     b = 1 },
+    colorTimerFailed   = { r = 1,      g = 0.2,   b = 0.2 },
+    colorPlus23        = { r = 1,      g = 1,     b = 1 },
+    colorPlus23Expired = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorPlus23Remaining = { r = 0,    g = 1,     b = 0 },
+    colorBossPending   = { r = 1,      g = 1,     b = 1 },
+    colorBossKilled    = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorForcesPct     = { r = 1,      g = 1,     b = 1 },
+    colorForcesPull    = { r = 0,      g = 1,     b = 0 },
+    forcesColor        = { r = 0.25,   g = 0.55,  b = 1.0 },
+    colorDeaths        = { r = 1,      g = 1,     b = 1 },
+    colorDeathsPenalty = { r = 1,      g = 0.27,  b = 0.27 },
+    colorDeathsIcon    = { r = 1,      g = 1,     b = 1 },
+    colorBattleRes     = { r = 1,      g = 1,     b = 1 },
+    colorBattleResIcon = { r = 1,      g = 1,     b = 1 },
+    colorButtons       = { r = 1,      g = 1,     b = 1 },
+}
+
+local function GetColor(key)
+    local def = COLOR_DEFAULTS[key]
+    if MPT.db and MPT.db[key] and type(MPT.db[key].r) == "number" and type(MPT.db[key].g) == "number" and type(MPT.db[key].b) == "number" then
+        return MPT.db[key].r, MPT.db[key].g, MPT.db[key].b
+    end
+    if def then return def.r, def.g, def.b end
+    return 1, 1, 1
+end
+
+local function RGBToHex(r, g, b)
+    return string.format("|cff%02x%02x%02x", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
+end
+
+-- ============================================================
 -- Вспомогательные функции
 -- ============================================================
 
@@ -601,6 +638,26 @@ function MPT:RefreshForcesTexture()
     ApplyForcesTexture()
 end
 
+function MPT:IsPreviewActive()
+    return not state.running and frame and frame:IsShown()
+end
+
+function MPT:RefreshAllColors()
+    ApplyForcesColor()
+    self:ApplyButtonColors()
+    self:ApplyDeathsBrIconColors()
+    if state.level and (state.dungeonName or state.mapID) then
+        local lvlStr = "+" .. state.level
+        local name  = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
+        lastTitleText = string.format("%s%s \226\128\148 %s|r", RGBToHex(GetColor("colorTitle")), lvlStr, name)
+        frame.title:SetText(lastTitleText)
+    end
+    if lastDisplayedAffixIDs and #lastDisplayedAffixIDs > 0 then
+        MPT:RefreshAffixes(lastDisplayedAffixIDs)
+    end
+    UpdateDisplay()
+end
+
 local function GetFontPath(name)
     if MPT.FONTS then
         for _, f in ipairs(MPT.FONTS) do
@@ -625,18 +682,58 @@ local function ApplyFont()
     frame.forces:SetFont(path, 11, "")
     frame.forcesBar.text:SetFont(path, 11, "")
     frame.deaths:SetFont(path, 11, "")
+    frame.battleRes:SetFont(path, 11, "")
 end
 
 function MPT:RefreshFont()
     ApplyFont()
 end
 
--- Смерти
+-- Смерти: иконка черепа + текст (число и штраф); выравнивание по низу строки
+local DEATHS_ROW_H = 12
+frame.deathsIcon = frame:CreateTexture(nil, "OVERLAY")
+frame.deathsIcon:SetSize(12, 12)
+frame.deathsIcon:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 8, -124 - BOSS_LINE_H1 - DEATHS_ROW_H)
+frame.deathsIcon:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\skull.blp")
+
 frame.deaths = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-frame.deaths:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -124 - BOSS_LINE_H1)
+frame.deaths:SetPoint("BOTTOMLEFT", frame.deathsIcon, "BOTTOMRIGHT", 2, 0)
 frame.deaths:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
 frame.deaths:SetTextColor(1, 1, 1)
-frame.deaths:SetText("|cff888888Смертей: —|r")
+frame.deaths:SetText("|cff888888—|r")
+
+-- Боевые воскрешения (справа от строки смертей; число из стандартного трекера)
+local function GetBattleResCount()
+    local f = _G["ScenarioObjectiveTrackerChallengeModeBlockBattleResurrection"]
+    if not f then return nil end
+    if f.GetText then
+        local n = tonumber(f:GetText())
+        if n and n >= 0 and n <= 10 then return n end
+    end
+    if f.GetNumRegions then
+        for i = 1, f:GetNumRegions() do
+            local r = select(i, f:GetRegions())
+            if r and r.GetObjectType and r:GetObjectType() == "FontString" and r.GetText then
+                local n = tonumber(r:GetText())
+                if n and n >= 0 and n <= 10 then return n end
+            end
+        end
+    end
+    return nil
+end
+
+-- Боевые воскрешения: иконка сердца + число; выравнивание по низу с текстом
+frame.battleResIcon = frame:CreateTexture(nil, "OVERLAY")
+frame.battleResIcon:SetSize(12, 12)
+frame.battleResIcon:SetPoint("BOTTOMLEFT", frame.deaths, "BOTTOMRIGHT", 14, 0)
+frame.battleResIcon:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\heart.blp")
+
+frame.battleRes = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+frame.battleRes:SetPoint("BOTTOMLEFT", frame.battleResIcon, "BOTTOMRIGHT", 6, 0)
+frame.battleRes:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.battleRes:SetTextColor(1, 1, 1)
+frame.battleRes:SetJustifyH("LEFT")
+frame.battleRes:SetText("|cff888888—|r")
 
 -- ============================================================
 -- Кнопки управления (развёрнутый режим: 14×14, у нижнего правого угла)
@@ -738,6 +835,24 @@ pauseSmall:SetScript("OnEnter", function(self)
 end)
 pauseSmall:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+function MPT:ApplyButtonColors()
+    local r, g, b = GetColor("colorButtons")
+    if collapseTex then collapseTex:SetVertexColor(r, g, b, 1) end
+    if forfeitSmallTex then forfeitSmallTex:SetVertexColor(r, g, b, 1) end
+    if pauseSmallTex then pauseSmallTex:SetVertexColor(r, g, b, 1) end
+    if forfeitTex then forfeitTex:SetVertexColor(r, g, b, 1) end
+    if pauseTex then pauseTex:SetVertexColor(r, g, b, 1) end
+end
+
+function MPT:ApplyDeathsBrIconColors()
+    local rD, gD, bD = GetColor("colorDeathsIcon")
+    local rBR, gBR, bBR = GetColor("colorBattleResIcon")
+    if frame.deathsIcon then frame.deathsIcon:SetVertexColor(rD, gD, bD, 1) end
+    if frame.battleResIcon then frame.battleResIcon:SetVertexColor(rBR, gBR, bBR, 1) end
+end
+MPT:ApplyButtonColors()
+MPT:ApplyDeathsBrIconColors()
+
 -- ============================================================
 -- Collapse state
 -- ============================================================
@@ -781,7 +896,10 @@ local function SetCollapsed(isCollapsed)
         for i = 1, MAX_BOSSES do frame.bossLines[i]:Hide() end
         frame.forces:Hide()
         frame.forcesBarContainer:Hide()
+        frame.deathsIcon:Hide()
         frame.deaths:Hide()
+        frame.battleRes:Hide()
+        frame.battleResIcon:Hide()
         frame.pauseLabel:Hide()
         forfeitBtn:Hide()
         pauseBtn:Hide()
@@ -817,10 +935,10 @@ local function SetCollapsed(isCollapsed)
                 local baseC = limit2c and math.floor(limit2c / 0.80 + 0.5)
                 collapsedTime = baseC and FormatCountdown(baseC - effC) or FormatTime(effC)
             end
-            timerStr = string.format("%s  %s  %s", collapsedTime, lvlStr, dungeon)
+            timerStr = string.format("%s%s  %s  %s|r", RGBToHex(GetColor("colorTitle")), collapsedTime, lvlStr, dungeon)
             local okP, isPausedCollapsed = pcall(function() return C_ChallengeMode.IsPaused() end)
             if okP and isPausedCollapsed then
-                timerStr = timerStr .. "  |cffff0000Пауза|r"
+                timerStr = timerStr .. "  " .. RGBToHex(GetColor("colorTimerFailed")) .. "Пауза|r"
             end
         else
             -- Статический режим (превью или ожидание): берём текущий текст таймера + заголовок
@@ -855,7 +973,10 @@ local function SetCollapsed(isCollapsed)
         -- Показываем обязательные элементы
         frame.timer:Show()
         SetForcesMode(MPT.db and MPT.db.forcesBar or false)
+        frame.deathsIcon:Show()
         frame.deaths:Show()
+        frame.battleRes:Show()
+        frame.battleResIcon:Show()
         forfeitBtn:Show()
         pauseBtn:Show()
         forfeitSmall:Hide()
@@ -1018,8 +1139,16 @@ local function UpdateBossLayout(count, bossTopY)
     frame.forcesBarContainer:SetPoint("TOPLEFT",  frame, "TOPLEFT",  8, forcesY)
     frame.forcesBarContainer:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, forcesY)
 
+    local deathsBottomY = deathsY - DEATHS_ROW_H
+    frame.deathsIcon:ClearAllPoints()
+    frame.deathsIcon:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 8, deathsBottomY)
     frame.deaths:ClearAllPoints()
-    frame.deaths:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, deathsY)
+    frame.deaths:SetPoint("BOTTOMLEFT", frame.deathsIcon, "BOTTOMRIGHT", 2, 0)
+
+    frame.battleResIcon:ClearAllPoints()
+    frame.battleResIcon:SetPoint("BOTTOMLEFT", frame.deaths, "BOTTOMRIGHT", 14, 0)
+    frame.battleRes:ClearAllPoints()
+    frame.battleRes:SetPoint("BOTTOMLEFT", frame.battleResIcon, "BOTTOMRIGHT", 6, 0)
 
     frame:SetHeight(-deathsY + 24)
 end
@@ -1205,16 +1334,22 @@ UpdateDisplay = function()
             end
         end
 
+        local tr, tg, tb = GetColor("colorTimer")
+        local tfr, tfg, tfb = GetColor("colorTimerFailed")
         if state.completed then
-            frame.timer:SetTextColor(overBase and 1 or 0.2, overBase and 0.2 or 1, 0.2)
+            if overBase then
+                frame.timer:SetTextColor(tfr, tfg, tfb)
+            else
+                frame.timer:SetTextColor(tr, tg, tb)
+            end
             frame.timer:SetText(timerText .. " [done]")
         else
             if not useReverse and baseLimit and (baseLimit - effElapsed) < 0 then
-                frame.timer:SetTextColor(1, 0.2, 0.2)
+                frame.timer:SetTextColor(tfr, tfg, tfb)
             elseif overBase then
-                frame.timer:SetTextColor(1, 0.2, 0.2)
+                frame.timer:SetTextColor(tfr, tfg, tfb)
             else
-                frame.timer:SetTextColor(1, 1, 1)
+                frame.timer:SetTextColor(tr, tg, tb)
             end
             frame.timer:SetText(timerText)
         end
@@ -1228,9 +1363,9 @@ UpdateDisplay = function()
         if active and state.elapsed then
             local lvlStr  = state.level and ("+" .. state.level) or "?"
             local dungeon = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
-            local titleStr = string.format("%s  %s  %s", FormatTime(effElapsed), lvlStr, dungeon)
+            local titleStr = string.format("%s%s  %s  %s|r", RGBToHex(GetColor("colorTitle")), FormatTime(effElapsed), lvlStr, dungeon)
             if isPaused then
-                titleStr = titleStr .. "  |cffff0000Пауза|r"
+                titleStr = titleStr .. "  " .. RGBToHex(GetColor("colorTimerFailed")) .. "Пауза|r"
             end
             frame.title:SetText(titleStr)
         else
@@ -1239,28 +1374,28 @@ UpdateDisplay = function()
         return
     end
 
-    -- Строки +2 / +3: основной текст + зелёный таймер "осталось до конца" (пока не просрочено)
-    local GREEN_REM = "|cff00ff00"
+    -- Строки +2 / +3: основной текст + таймер "осталось до конца" (пока не просрочено)
+    local hexPlus23 = RGBToHex(GetColor("colorPlus23"))
+    local hexPlus23Exp = RGBToHex(GetColor("colorPlus23Expired"))
+    local hexPlus23Rem = RGBToHex(GetColor("colorPlus23Remaining"))
     local showPlus2, showPlus3 = false, false
     if active and state.elapsed and (limit2 or limit3) then
         if limit2 then
             showPlus2 = true
             local rem2 = limit2 - effElapsed
             if useReverse then
-                -- Обратный: показываем абсолютный лимит, серый если просрочен
                 if rem2 < 0 then
-                    frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(limit2)))
+                    frame.plus2:SetText(string.format("%s+2 (%s)|r", hexPlus23Exp, FormatTime(limit2)))
                 else
-                    frame.plus2:SetText(string.format("+2 (%s) %s%s|r", FormatTime(limit2), GREEN_REM, FormatTime(rem2)))
+                    frame.plus2:SetText(string.format("%s+2 (%s) %s%s|r", hexPlus23, FormatTime(limit2), hexPlus23Rem, FormatTime(rem2)))
                 end
             else
-                -- Прямой: показываем дедлайн убывающего таймера
                 local deadline2 = baseLimit and (baseLimit - limit2) or 0
                 local remaining = baseLimit and (baseLimit - effElapsed) or 0
                 if remaining < deadline2 then
-                    frame.plus2:SetText(string.format("|cff888888+2 (%s)|r", FormatTime(deadline2)))
+                    frame.plus2:SetText(string.format("%s+2 (%s)|r", hexPlus23Exp, FormatTime(deadline2)))
                 else
-                    frame.plus2:SetText(string.format("+2 (%s) %s%s|r", FormatTime(deadline2), GREEN_REM, FormatTime(rem2)))
+                    frame.plus2:SetText(string.format("%s+2 (%s) %s%s|r", hexPlus23, FormatTime(deadline2), hexPlus23Rem, FormatTime(rem2)))
                 end
             end
         end
@@ -1269,17 +1404,17 @@ UpdateDisplay = function()
             local rem3 = limit3 - effElapsed
             if useReverse then
                 if rem3 < 0 then
-                    frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(limit3)))
+                    frame.plus3:SetText(string.format("%s+3 (%s)|r", hexPlus23Exp, FormatTime(limit3)))
                 else
-                    frame.plus3:SetText(string.format("+3 (%s) %s%s|r", FormatTime(limit3), GREEN_REM, FormatTime(rem3)))
+                    frame.plus3:SetText(string.format("%s+3 (%s) %s%s|r", hexPlus23, FormatTime(limit3), hexPlus23Rem, FormatTime(rem3)))
                 end
             else
                 local deadline3 = baseLimit and (baseLimit - limit3) or 0
                 local remaining = baseLimit and (baseLimit - effElapsed) or 0
                 if remaining < deadline3 then
-                    frame.plus3:SetText(string.format("|cff888888+3 (%s)|r", FormatTime(deadline3)))
+                    frame.plus3:SetText(string.format("%s+3 (%s)|r", hexPlus23Exp, FormatTime(deadline3)))
                 else
-                    frame.plus3:SetText(string.format("+3 (%s) %s%s|r", FormatTime(deadline3), GREEN_REM, FormatTime(rem3)))
+                    frame.plus3:SetText(string.format("%s+3 (%s) %s%s|r", hexPlus23, FormatTime(deadline3), hexPlus23Rem, FormatTime(rem3)))
                 end
             end
         end
@@ -1295,38 +1430,48 @@ UpdateDisplay = function()
     -- Прогресс (одно значение = %, 0-100)
     local forces = GetForces()
     local useBar = MPT.db and MPT.db.forcesBar
+    local hexForcesPct = RGBToHex(GetColor("colorForcesPct"))
+    local hexForcesPull = RGBToHex(GetColor("colorForcesPull"))
+    local hexGrey = RGBToHex(GetColor("colorBossKilled"))
     if forces then
-        local pctColor = forces >= 100 and "|cff00ff00" or ""
-        local pctEnd   = forces >= 100 and "|r" or ""
+        local pctColor = forces >= 100 and hexForcesPull or hexForcesPct
+        local pctEnd   = "|r"
         local baseText = string.format("%.1f%%", forces)
-        if engagedForcesTotal >= 0.05 then
+        if (MPT.db and MPT.db.showForcesPullPct ~= false) and engagedForcesTotal >= 0.05 then
             local engagedCount = 0
             for _ in pairs(engagedGuids) do engagedCount = engagedCount + 1 end
-            baseText = baseText .. string.format(" |cff00ff00+ %.2f%% (%d)|r", engagedForcesTotal, engagedCount)
+            baseText = baseText .. string.format(" %s+ %.2f%% (%d)|r", hexForcesPull, engagedForcesTotal, engagedCount)
         end
         if useBar then
             frame.forcesBar:SetValue(math.min(forces, 100))
             frame.forcesBar.text:SetText(pctColor .. baseText .. pctEnd)
         else
-            frame.forces:SetText(string.format("Убито врагов: %s%s%s", pctColor, baseText, pctEnd))
+            frame.forces:SetText(string.format("%sУбито врагов: |r%s%s%s", pctColor, pctColor, baseText, pctEnd))
         end
     else
         if useBar then
             frame.forcesBar:SetValue(0)
-            frame.forcesBar.text:SetText("|cff888888—|r")
+            frame.forcesBar.text:SetText(hexGrey .. "—|r")
         else
-            frame.forces:SetText("|cff888888Убито врагов: —|r")
+            frame.forces:SetText(string.format("%sУбито врагов: |r%s—|r", hexForcesPct, hexGrey))
         end
     end
 
-    -- Смерти
+    -- Смерти (иконка черепа + число и штраф)
+    local hexDeaths = RGBToHex(GetColor("colorDeaths"))
+    local hexDeathsPenalty = RGBToHex(GetColor("colorDeathsPenalty"))
     if deathCount > 0 then
         local deathSign = useReverse and "+" or "-"
         frame.deaths:SetText(string.format(
-            "Смертей: %d |cffff4444(%s%dс)|r", deathCount, deathSign, deathLost))
+            "%s%d|r %s(%s%dс)|r", hexDeaths, deathCount, hexDeathsPenalty, deathSign, deathLost))
     else
-        frame.deaths:SetText("|cff888888Смертей: 0|r")
+        frame.deaths:SetText(hexDeaths .. "0|r")
     end
+
+    -- Боевые воскрешения (иконка сердца + число) — свой цвет для цифры БР
+    local hexBattleRes = RGBToHex(GetColor("colorBattleRes"))
+    local brCount = GetBattleResCount()
+    frame.battleRes:SetText(hexBattleRes .. (brCount ~= nil and tostring(brCount) or "—") .. "|r")
 end
 
 -- Forward declaration: UpdateBossDisplay определена ниже, после ShowPreview.
@@ -1483,7 +1628,8 @@ function MPT:RefreshAffixes(affixIDs)
     -- Текстовый блок
     if useText then
         local line1, line2 = GetAffixStrings(affixIDs)
-        local prefix, suffix = "|cffaaaaaa", "|r"
+        local prefix = RGBToHex(GetColor("colorAffixes"))
+        local suffix = "|r"
         frame.affixes:SetText(line1 and (prefix .. line1 .. suffix) or "")
         frame.affixes:Show()
         if line2 and #line2 > 0 then
@@ -1578,6 +1724,15 @@ end
 
 function MPT:RefreshForcesMode()
     SetForcesMode(self.db and self.db.forcesBar or false)
+    if frame and frame:IsShown() then
+        -- В режиме превью нужна полная перерисовка (UpdateTimerLayout(true,true) + UpdateBossLayout),
+        -- иначе только UpdateDisplay() даёт неверный layout и бар «уезжает» вверх.
+        if not state.running and not state.completed and self.ShowPreview then
+            self:ShowPreview()
+        elseif UpdateDisplay then
+            UpdateDisplay()
+        end
+    end
 end
 
 function MPT:StartTimer()
@@ -1626,7 +1781,7 @@ function MPT:StartTimer()
     -- Заголовок: "+15 — Кузня Крови"
     local lvlStr = state.level and ("+" .. state.level) or "?"
     local name   = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
-    lastTitleText = string.format("|cffffff00%s \226\128\148 %s|r", lvlStr, name)
+    lastTitleText = string.format("%s%s \226\128\148 %s|r", RGBToHex(GetColor("colorTitle")), lvlStr, name)
     frame.title:SetText(lastTitleText)
 
     -- Аффиксы
@@ -1708,22 +1863,23 @@ function MPT:ShowPreview()
     if collapsed then SetCollapsed(false) end
     self:LoadTimerPosition()
 
-    lastTitleText = "|cffffff00+15 \226\128\148 Кузня Крови|r"
+    lastTitleText = string.format("%s+15 \226\128\148 Кузня Крови|r", RGBToHex(GetColor("colorTitle")))
     frame.title:SetText(lastTitleText)
     -- Аффиксы превью: 4 иконки с разными способами скругления для теста
     local previewAffixIDs = { 10, 2, 12, 3 }
     self:RefreshAffixes(previewAffixIDs)
-    frame.timer:SetTextColor(1, 1, 1)
-    -- Превью: elapsed=12:44 (764 сек), limit2=28:00 (1680), limit3=22:24 (1344) → rem2=15:16, rem3=9:40
+    local tr, tg, tb = GetColor("colorTimer")
+    frame.timer:SetTextColor(tr, tg, tb)
+    local hexP23 = RGBToHex(GetColor("colorPlus23"))
+    local hexP23Rem = RGBToHex(GetColor("colorPlus23Remaining"))
     if MPT.db and MPT.db.reverseTimer then
         frame.timer:SetText("12:44/35:00")
-        frame.plus2:SetText("+2 (28:00) |cff00ff0015:16|r")
-        frame.plus3:SetText("+3 (22:24) |cff00ff009:40|r")
+        frame.plus2:SetText(string.format("%s+2 (28:00) %s15:16|r", hexP23, hexP23Rem))
+        frame.plus3:SetText(string.format("%s+3 (22:24) %s9:40|r", hexP23, hexP23Rem))
     else
-        -- base=35:00, elapsed=12:44 → remaining=22:16; deadline+2=7:00, deadline+3=12:36; rem2=15:16, rem3=9:40
         frame.timer:SetText("22:16")
-        frame.plus2:SetText("+2 (7:00) |cff00ff0015:16|r")
-        frame.plus3:SetText("+3 (12:36) |cff00ff009:40|r")
+        frame.plus2:SetText(string.format("%s+2 (7:00) %s15:16|r", hexP23, hexP23Rem))
+        frame.plus3:SetText(string.format("%s+3 (12:36) %s9:40|r", hexP23, hexP23Rem))
     end
 
     -- Боссы: берём из статической базы для Кузни Крови
@@ -1734,21 +1890,23 @@ function MPT:ShowPreview()
     if MPT.db and MPT.db.showBossRecord ~= nil then
         showRecord = not not MPT.db.showBossRecord
     end
+    local hexBossKilled = RGBToHex(GetColor("colorBossKilled"))
+    local hexBossPending = RGBToHex(GetColor("colorBossPending"))
     for j, bossName in ipairs(previewBossList) do
         if j == 1 then
             if showRecord then
-                previewTexts[j] = string.format("|cff888888[+] %s  2:03 (Рекорд 1:59, +0:04)|r", bossName)
+                previewTexts[j] = string.format("%s[+] %s  2:03 (Рекорд 1:59, +0:04)|r", hexBossKilled, bossName)
             else
-                previewTexts[j] = string.format("|cff888888[+] %s  2:03|r", bossName)
+                previewTexts[j] = string.format("%s[+] %s  2:03|r", hexBossKilled, bossName)
             end
         elseif j == 2 then
             if showRecord then
-                previewTexts[j] = string.format("|cff888888[+] %s  4:51 (Рекорд 4:20, +0:31)|r", bossName)
+                previewTexts[j] = string.format("%s[+] %s  4:51 (Рекорд 4:20, +0:31)|r", hexBossKilled, bossName)
             else
-                previewTexts[j] = string.format("|cff888888[+] %s  4:51|r", bossName)
+                previewTexts[j] = string.format("%s[+] %s  4:51|r", hexBossKilled, bossName)
             end
         else
-            previewTexts[j] = string.format("[ ] %s  \226\128\148", bossName)
+            previewTexts[j] = string.format("%s[ ] %s  \226\128\148|r", hexBossPending, bossName)
         end
     end
     local previewCount = math.min(#previewTexts, MAX_BOSSES)
@@ -1763,21 +1921,30 @@ function MPT:ShowPreview()
         frame.bossLines[i]:Hide()
     end
     local previewBossTopY = UpdateTimerLayout(true, true)
-    UpdateBossLayout(previewCount, previewBossTopY)
-
     local useForcesBar = MPT.db and MPT.db.forcesBar
     SetForcesMode(useForcesBar)
+    UpdateBossLayout(previewCount, previewBossTopY)
+
+    local showPullPct = MPT.db and MPT.db.showForcesPullPct ~= false
+    local hexFPct = RGBToHex(GetColor("colorForcesPct"))
+    local hexFPull = RGBToHex(GetColor("colorForcesPull"))
+    local hexD = RGBToHex(GetColor("colorDeaths"))
+    local hexDPen = RGBToHex(GetColor("colorDeathsPenalty"))
+    local forcesPreviewText = showPullPct and string.format("%s70.0%%|r %s+ 5.40%% (7)|r", hexFPct, hexFPull) or (hexFPct .. "70.0%|r")
     if useForcesBar then
         frame.forcesBar:SetValue(70)
-        frame.forcesBar.text:SetText("70.0% |cff00ff00+ 5.40% (7)|r")
+        frame.forcesBar.text:SetText(forcesPreviewText)
     else
-        frame.forces:SetText("Убито врагов: 70.0% |cff00ff00+5.40% (7)|r")
+        local textPreview = showPullPct and string.format("%sУбито врагов: |r%s70.0%%|r %s+5.40%% (7)|r", hexFPct, hexFPct, hexFPull) or string.format("%sУбито врагов: |r%s70.0%%|r", hexFPct, hexFPct)
+        frame.forces:SetText(textPreview)
     end
     if MPT.db and MPT.db.reverseTimer then
-        frame.deaths:SetText("Смертей: 2 |cffff4444(+10с)|r")
+        frame.deaths:SetText(string.format("%s2|r %s(+10с)|r", hexD, hexDPen))
     else
-        frame.deaths:SetText("Смертей: 2 |cffff4444(-10с)|r")
+        frame.deaths:SetText(string.format("%s2|r %s(-10с)|r", hexD, hexDPen))
     end
+    local hexBR = RGBToHex(GetColor("colorBattleRes"))
+    frame.battleRes:SetText(hexBR .. "1|r")
 
     frame:Show()
 end
@@ -1836,6 +2003,8 @@ end
 
 UpdateBossDisplay = function()
     if not state.bosses or #state.bosses == 0 then return end
+    local hexKilled = RGBToHex(GetColor("colorBossKilled"))
+    local hexPending = RGBToHex(GetColor("colorBossPending"))
     local count = math.min(#state.bosses, MAX_BOSSES)
     for i = 1, count do
         frame.bossLines[i]:Show()
@@ -1857,17 +2026,16 @@ UpdateBossDisplay = function()
                 end
                 if rec and rec.fd and showRecord then
                     local delta = FormatDelta(fd, rec.fd)
-                    line = string.format("|cff888888[+] %s  %s (Рекорд %s, %s)|r",
-                        boss.name, fdStr, FormatTime(rec.fd), delta)
+                    line = string.format("%s[+] %s  %s (Рекорд %s, %s)|r",
+                        hexKilled, boss.name, fdStr, FormatTime(rec.fd), delta)
                 else
-                    line = string.format("|cff888888[+] %s  %s|r", boss.name, fdStr)
+                    line = string.format("%s[+] %s  %s|r", hexKilled, boss.name, fdStr)
                 end
             else
-                -- Убит, но нет времени боя (ENCOUNTER_START не сработал)
-                line = string.format("|cff888888[+] %s|r", boss.name)
+                line = string.format("%s[+] %s|r", hexKilled, boss.name)
             end
         else
-            line = string.format("[ ] %s  \226\128\148", boss.name)
+            line = string.format("%s[ ] %s  \226\128\148|r", hexPending, boss.name)
         end
         local fs = frame.bossLines[i]
         fs:SetText(line)

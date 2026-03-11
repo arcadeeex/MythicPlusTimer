@@ -15,6 +15,7 @@ end
 local function AddForcesLine(tooltip, unit)
     if not unit then return end
     if UnitIsPlayer(unit) then return end
+    if MPT.db and MPT.db.showForcesInTooltip == false then return end
 
     local guid = UnitGUID(unit)
     if not guid then return end

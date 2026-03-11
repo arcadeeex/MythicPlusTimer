@@ -337,7 +337,7 @@ local function TakeSnapshot(label)
 end
 
 -- Сканирует фреймы и C_ChallengeMode для поиска источника данных о воскрешениях (сердечко/цифра).
--- Вызов: /mpt resdebug или MPT:DumpResurrectionSources()
+-- Вызов: MPT:DumpResurrectionSources()
 local function ScanFrameForText(frame, depth, results, seen)
     if not frame or type(frame) ~= "table" or seen[frame] or depth > 8 then return end
     seen[frame] = true
@@ -411,7 +411,7 @@ function MPT:DumpResurrectionSources()
         self:Print(string.format("  [%s] depth=%d text=%s", r.name, r.depth, r.text))
     end
     if #results == 0 then
-        self:Print("  Нет найденного текста. Открой стандартный UI ключа (трекер целей) и снова введи /mpt resdebug")
+        self:Print("  Нет найденного текста. Открой стандартный UI ключа (трекер целей) и снова вызови DumpResurrectionSources().")
     end
     self:Print("=== Конец дебага воскрешений ===")
 end

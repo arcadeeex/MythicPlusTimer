@@ -13,12 +13,32 @@ local DB_DEFAULTS = {
     scale        = 1.0,
     forcesBar    = false,
     forcesColor  = { r = 0.25, g = 0.55, b = 1.0 },
+    showForcesInTooltip = true,
+    showForcesPullPct   = true,
     showBossRecord = true,
     autoKeystone = false,
     reverseTimer = false,
     forcesTexture = "Blank",
     font = "Friz Quadrata (default)",
     hideDefaultTracker = false,
+    -- Цвета (кастомизация)
+    colorTitle         = { r = 1,      g = 0.82,  b = 0 },
+    colorAffixes       = { r = 0.67,   g = 0.67,  b = 0.67 },
+    colorTimer         = { r = 1,      g = 1,     b = 1 },
+    colorTimerFailed   = { r = 1,      g = 0.2,   b = 0.2 },
+    colorPlus23        = { r = 1,      g = 1,     b = 1 },
+    colorPlus23Expired = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorPlus23Remaining = { r = 0,    g = 1,     b = 0 },
+    colorBossPending   = { r = 1,      g = 1,     b = 1 },
+    colorBossKilled    = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorForcesPct     = { r = 1,      g = 1,     b = 1 },
+    colorForcesPull    = { r = 0,      g = 1,     b = 0 },
+    colorDeaths        = { r = 1,      g = 1,     b = 1 },
+    colorDeathsPenalty = { r = 1,      g = 0.27,  b = 0.27 },
+    colorDeathsIcon    = { r = 1,      g = 1,     b = 1 },
+    colorBattleRes     = { r = 1,      g = 1,     b = 1 },
+    colorBattleResIcon = { r = 1,      g = 1,     b = 1 },
+    colorButtons       = { r = 1,      g = 1,     b = 1 },
 }
 
 local CHAR_DB_DEFAULTS = {}
@@ -54,12 +74,36 @@ initFrame:SetScript("OnEvent", function(self, _, addonName)
     self:UnregisterEvent("ADDON_LOADED")
 end)
 
+-- Дефолты цветов для сброса в настройках (копия ключей из DB_DEFAULTS)
+MPT.COLOR_DEFAULTS = {
+    colorTitle         = { r = 1,      g = 0.82,  b = 0 },
+    colorAffixes       = { r = 0.67,   g = 0.67,  b = 0.67 },
+    colorTimer         = { r = 1,      g = 1,     b = 1 },
+    colorTimerFailed   = { r = 1,      g = 0.2,   b = 0.2 },
+    colorPlus23        = { r = 1,      g = 1,     b = 1 },
+    colorPlus23Expired = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorPlus23Remaining = { r = 0,   g = 1,     b = 0 },
+    colorBossPending   = { r = 1,      g = 1,     b = 1 },
+    colorBossKilled    = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorForcesPct     = { r = 1,      g = 1,     b = 1 },
+    colorForcesPull    = { r = 0,      g = 1,     b = 0 },
+    forcesColor        = { r = 0.25,   g = 0.55,  b = 1.0 },
+    colorDeaths        = { r = 1,      g = 1,     b = 1 },
+    colorDeathsPenalty = { r = 1,      g = 0.27,  b = 0.27 },
+    colorDeathsIcon    = { r = 1,      g = 1,     b = 1 },
+    colorBattleRes     = { r = 1,      g = 1,     b = 1 },
+    colorBattleResIcon = { r = 1,      g = 1,     b = 1 },
+    colorButtons       = { r = 1,      g = 1,     b = 1 },
+}
+
 function MPT:Init()
     if self.LoadTimerPosition then
         self:LoadTimerPosition()
     end
     if self.RefreshForcesTexture then self:RefreshForcesTexture() end
     if self.RefreshFont           then self:RefreshFont()          end
+    if self.ApplyButtonColors     then self:ApplyButtonColors()     end
+    if self.ApplyDeathsBrIconColors then self:ApplyDeathsBrIconColors() end
 end
 
 function MPT:Print(msg)
@@ -127,15 +171,7 @@ SlashCmdList["MPT"] = function(msg)
         end
         if found == 0 then MPT:Print("Ничего не найдено. Попробуй во время активного ключа.") end
 
-    elseif cmd == "resdebug" then
-        -- Дебаг воскрешений в бою: C_ChallengeMode и фреймы с текстом (сердечко/цифра)
-        if MPT.DumpResurrectionSources then
-            MPT:DumpResurrectionSources()
-        else
-            MPT:Print("DataCollector не загружен — DumpResurrectionSources недоступен.")
-        end
-
     else
-        MPT:Print("Команды: /mpt debug | reset | timer | preview | kills | findframes | resdebug")
+        MPT:Print("Команды: /mpt debug | reset | timer | preview | kills | findframes")
     end
 end
