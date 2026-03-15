@@ -63,10 +63,11 @@ local function AddForcesLine(tooltip, unit)
 end
 
 -- Получить unit из тултипа.
--- Sirus WotLK: GetUnit() возвращает (name, unitToken) — берём b или a.
+-- Sirus WotLK: GetUnit() возвращает (name, unitToken). Используем только токен (b):
+-- имя (a) нельзя передавать в UnitGUID — вне боя часто b=nil, тогда unit был бы именем и процент не показывался.
 local function ResolveUnit(self)
     local a, b = self:GetUnit()
-    local unit = b or a
+    local unit = b  -- только токен, не имя
 
     if not unit then
         local mFocus = GetMouseFocus()
@@ -124,7 +125,24 @@ tooltipInitFrame:SetScript("OnEvent", function(self)
     GameTooltip:HookScript("OnTooltipSetUnit", function(self)
         if HasOurLine(self) then return end
         local unit = ResolveUnit(self)
-        if not unit then return end
+        if not unit then
+            -- Вне боя GetUnit() часто возвращает (name, nil); mouseover может появиться с задержкой — повтор через кадр
+            local inKey = C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive()
+            if inKey and self:NumLines() and self:NumLines() > 0 then
+                local tt = self
+                local defer = CreateFrame("Frame")
+                defer:SetScript("OnUpdate", function(f)
+                    f:SetScript("OnUpdate", nil)
+                    if not tt:IsVisible() then return end
+                    if HasOurLine(tt) then return end
+                    local u = ResolveUnit(tt)
+                    if u and AddForcesLine(tt, u) then
+                        tt:Show()
+                    end
+                end)
+            end
+            return
+        end
         if AddForcesLine(self, unit) then
             self:Show()
         end

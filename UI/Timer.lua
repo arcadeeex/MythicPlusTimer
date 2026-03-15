@@ -21,7 +21,7 @@ local state = {
     affixes               = nil,
     dungeonName           = nil,
     mapID                 = nil,  -- C_ChallengeMode.GetActiveChallengeMapID()
-    bosses                = nil,  -- list of {name, killed, fightDuration, isNewFdPB}
+    bosses                = nil,  -- list of {name, killed, killTime}  killTime = elapsed от старта ключа при убийстве
     encounterStartElapsed = nil,  -- elapsed при ENCOUNTER_START текущего боя
     wasPaused             = false,  -- для коррекции startTime при снятии паузы
 }
@@ -1894,16 +1894,17 @@ function MPT:ShowPreview()
     local hexBossPending = RGBToHex(GetColor("colorBossPending"))
     for j, bossName in ipairs(previewBossList) do
         if j == 1 then
+            -- Время убийства от старта ключа; рекорд 4:01, текущий 3:41 = -0:20
             if showRecord then
-                previewTexts[j] = string.format("%s[+] %s  2:03 (Рекорд 1:59, +0:04)|r", hexBossKilled, bossName)
+                previewTexts[j] = string.format("%s[+] %s  3:41 (Рекорд 4:01, -0:20)|r", hexBossKilled, bossName)
             else
-                previewTexts[j] = string.format("%s[+] %s  2:03|r", hexBossKilled, bossName)
+                previewTexts[j] = string.format("%s[+] %s  3:41|r", hexBossKilled, bossName)
             end
         elseif j == 2 then
             if showRecord then
-                previewTexts[j] = string.format("%s[+] %s  4:51 (Рекорд 4:20, +0:31)|r", hexBossKilled, bossName)
+                previewTexts[j] = string.format("%s[+] %s  7:22 (Рекорд 7:15, +0:07)|r", hexBossKilled, bossName)
             else
-                previewTexts[j] = string.format("%s[+] %s  4:51|r", hexBossKilled, bossName)
+                previewTexts[j] = string.format("%s[+] %s  7:22|r", hexBossKilled, bossName)
             end
         else
             previewTexts[j] = string.format("%s[ ] %s  \226\128\148|r", hexBossPending, bossName)
@@ -1962,8 +1963,8 @@ local function ParseEncounterState(msg)
 end
 
 -- ============================================================
--- Рекорды боссов: лучшее время боя (fd).
--- Хранятся в MPT.db.bossRecords[dungeonName][keystoneLevel][bossName]
+-- Рекорды боссов: лучшее время убийства от старта ключа (kt в секундах).
+-- Хранятся в MPT.db.bossRecords[dungeonName][keystoneLevel][bossName] = { kt = killTime }
 -- ============================================================
 local function GetBossRecord(bossName)
     if not MPT.db or not MPT.db.bossRecords then return nil end
@@ -1975,8 +1976,9 @@ local function GetBossRecord(bossName)
     return lr and lr[bossName] or nil
 end
 
-local function UpdateBossRecord(bossName, fightDuration)
+local function UpdateBossRecord(bossName, killTime)
     if not MPT.db or not state.dungeonName or not state.level then return end
+    if not killTime or killTime < 0 then return end
     if not MPT.db.bossRecords then MPT.db.bossRecords = {} end
     local records = MPT.db.bossRecords
     local dn = state.dungeonName
@@ -1987,15 +1989,15 @@ local function UpdateBossRecord(bossName, fightDuration)
     local lvRec = dnRec[lv]
     local rec = lvRec[bossName]
     if not rec then
-        lvRec[bossName] = { fd = fightDuration }
-    elseif fightDuration and (not rec.fd or fightDuration < rec.fd) then
-        rec.fd = fightDuration
+        lvRec[bossName] = { kt = killTime }
+    elseif not rec.kt or killTime < rec.kt then
+        rec.kt = killTime
     end
 end
 
--- Форматирует отклонение от рекорда: +0:04 или -0:03
-local function FormatDelta(current, record)
-    local delta = current - record
+-- Форматирует отклонение от рекорда: -0:20 (быстрее рекорда) или +0:04 (медленнее)
+local function FormatDelta(currentKillTime, recordKillTime)
+    local delta = currentKillTime - recordKillTime
     local sign  = delta >= 0 and "+" or "-"
     local abs   = math.abs(delta)
     return sign .. string.format("%d:%02d", math.floor(abs / 60), math.floor(abs % 60))
@@ -2016,20 +2018,20 @@ UpdateBossDisplay = function()
         local boss = state.bosses[i]
         local line
         if boss.killed then
-            local fd = boss.fightDuration
-            if fd then
-                local fdStr = FormatTime(fd)
+            local kt = boss.killTime
+            if kt then
+                local ktStr = FormatTime(kt)
                 local rec   = GetBossRecord(boss.name)
                 local showRecord = true
                 if MPT.db and MPT.db.showBossRecord ~= nil then
                     showRecord = not not MPT.db.showBossRecord
                 end
-                if rec and rec.fd and showRecord then
-                    local delta = FormatDelta(fd, rec.fd)
+                if rec and rec.kt and showRecord then
+                    local delta = FormatDelta(kt, rec.kt)
                     line = string.format("%s[+] %s  %s (Рекорд %s, %s)|r",
-                        hexKilled, boss.name, fdStr, FormatTime(rec.fd), delta)
+                        hexKilled, boss.name, ktStr, FormatTime(rec.kt), delta)
                 else
-                    line = string.format("%s[+] %s  %s|r", hexKilled, boss.name, fdStr)
+                    line = string.format("%s[+] %s  %s|r", hexKilled, boss.name, ktStr)
                 end
             else
                 line = string.format("%s[+] %s|r", hexKilled, boss.name)
@@ -2120,16 +2122,15 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         -- ASMSG_INSTANCE_ENCOUNTERS_STATE: список боссов при старте ключа
         if prefix == "ASMSG_INSTANCE_ENCOUNTERS_STATE" and msg and #msg > 0 then
             local newBosses = ParseEncounterState(msg)
-            -- Сливаем с текущим состоянием: сохраняем killTime/fightDuration для уже убитых
+            -- Сливаем с текущим состоянием: сохраняем killTime для уже убитых
             local oldBosses = state.bosses
             if oldBosses then
                 for _, newBoss in ipairs(newBosses) do
                     for _, oldBoss in ipairs(oldBosses) do
                         if oldBoss.name == newBoss.name and oldBoss.killed then
                             -- Сохраняем локальное состояние (ASMSG может прислать status=0 для убитого босса)
-                            newBoss.killed        = true
-                            newBoss.fightDuration = oldBoss.fightDuration
-                            newBoss.isNewFdPB     = oldBoss.isNewFdPB
+                            newBoss.killed   = true
+                            newBoss.killTime = oldBoss.killTime
                             break
                         end
                     end
@@ -2202,24 +2203,12 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "BOSS_KILL" then
         local _, bossName = ...
-        if state.bosses and bossName then
+        if state.bosses and bossName and state.running then
             for _, boss in ipairs(state.bosses) do
                 if boss.name == bossName then
-                    boss.killed = true
-
-                    -- Длительность боя (только если ENCOUNTER_START сработал)
-                    if state.encounterStartElapsed and state.running then
-                        boss.fightDuration = state.elapsed - state.encounterStartElapsed
-                        state.encounterStartElapsed = nil
-                    end
-
-                    -- Обновляем рекорд и PB-статус
-                    if boss.fightDuration then
-                        local oldRec = GetBossRecord(boss.name)
-                        boss.isNewFdPB = oldRec and oldRec.fd
-                                         and boss.fightDuration < oldRec.fd or false
-                        UpdateBossRecord(boss.name, boss.fightDuration)
-                    end
+                    boss.killed   = true
+                    boss.killTime = state.elapsed  -- время от старта ключа до убийства босса
+                    UpdateBossRecord(boss.name, boss.killTime)
                     break
                 end
             end
