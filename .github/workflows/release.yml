@@ -24,7 +24,7 @@ jobs:
 
       - name: Build MPT.zip
         run: |
-          mkdir -p dist/MythicPlusTimer
+          mkdir -p /tmp/MythicPlusTimer
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
@@ -35,9 +35,9 @@ jobs:
             --exclude='screenshots' \
             --exclude='.gitignore' \
             --exclude='.gitattributes' \
-            . dist/MythicPlusTimer/
-          cd dist
-          zip -r ../MPT.zip MythicPlusTimer
+            . /tmp/MythicPlusTimer/
+          cd /tmp
+          zip -r "$GITHUB_WORKSPACE/MPT.zip" MythicPlusTimer
 
       - name: Delete existing latest release and tag
         env:
@@ -51,10 +51,9 @@ jobs:
           tag_name: latest
           name: "MythicPlusTimer ${{ steps.version.outputs.version }}"
           body: |
-            Автоматический релиз при пуше в `${{ github.ref_name }}`.
+            Автоматический релиз аддона.
 
             **Версия:** ${{ steps.version.outputs.version }}
-            **Коммит:** ${{ github.sha }}
             **Сообщение:** ${{ github.event.head_commit.message }}
 
             ### Установка
