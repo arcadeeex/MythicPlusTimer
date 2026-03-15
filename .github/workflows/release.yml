@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from .toc
+        id: version
+        run: |
+          VERSION=$(grep -m1 "^## Version:" MythicPlusTimer.toc | sed 's/## Version: *//')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build MPT.zip
+        run: |
+          mkdir -p dist/MythicPlusTimer
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.claude' \
+            --exclude='.cursor' \
+            --exclude='.vscode' \
+            --exclude='scripts' \
+            --exclude='screenshots' \
+            --exclude='.gitignore' \
+            --exclude='.gitattributes' \
+            . dist/MythicPlusTimer/
+          cd dist
+          zip -r ../MPT.zip MythicPlusTimer
+
+      - name: Delete existing latest release and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Create latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "MythicPlusTimer ${{ steps.version.outputs.version }}"
+          body: |
+            Автоматический релиз при пуше в `${{ github.ref_name }}`.
+
+            **Версия:** ${{ steps.version.outputs.version }}
+            **Коммит:** ${{ github.sha }}
+            **Сообщение:** ${{ github.event.head_commit.message }}
+
+            ### Установка
+            Скачайте `MPT.zip`, распакуйте в `Interface/AddOns/` — папка `MythicPlusTimer` уже внутри.
+          files: MPT.zip
+          make_latest: true
