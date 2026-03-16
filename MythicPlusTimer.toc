@@ -9,8 +9,9 @@
 # Core
 Core.lua
 
-# Options panel (Interface → Addons)
-UI\Options.lua
+# Style system and settings window
+UI\StyleRegistry.lua
+UI\Styles\Default.lua
 
 # Static NPC forces database
 Data\NpcDatabase.lua
@@ -21,8 +22,14 @@ Data\BossDatabase.lua
 # MVP timer (draggable, shows time / forces / deaths)
 UI\Timer.lua
 
+# Standalone settings window
+UI\ConfigWindow.lua
+
 # Auto-slot keystone on receptacle open
 Features\KeystoneSlot.lua
+
+# Minimap button (/mpt)
+Features\MinimapButton.lua
 
 # Tooltip: NPC forces %
 Features\Tooltip.lua

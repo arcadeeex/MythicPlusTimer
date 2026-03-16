@@ -86,6 +86,12 @@ local COLOR_DEFAULTS = {
 
 local function GetColor(key)
     local def = COLOR_DEFAULTS[key]
+    if MPT.GetStyleColor then
+        local r, g, b = MPT:GetStyleColor(key, def)
+        if type(r) == "number" and type(g) == "number" and type(b) == "number" then
+            return r, g, b
+        end
+    end
     if MPT.db and MPT.db[key] and type(MPT.db[key].r) == "number" and type(MPT.db[key].g) == "number" and type(MPT.db[key].b) == "number" then
         return MPT.db[key].r, MPT.db[key].g, MPT.db[key].b
     end
@@ -213,6 +219,8 @@ local titleTooltipFrame
 local affixTooltipFrame
 local ShowAffixTooltip
 local SetForcesMode
+local NotifyDisplayChanged
+local lastDisplayedAffixIDs
 
 local frame = CreateFrame("Frame", "MPTTimerFrame", UIParent)
 frame:SetWidth(280)
@@ -1472,6 +1480,7 @@ UpdateDisplay = function()
     local hexBattleRes = RGBToHex(GetColor("colorBattleRes"))
     local brCount = GetBattleResCount()
     frame.battleRes:SetText(hexBattleRes .. (brCount ~= nil and tostring(brCount) or "—") .. "|r")
+    NotifyDisplayChanged()
 end
 
 -- Forward declaration: UpdateBossDisplay определена ниже, после ShowPreview.
@@ -1526,6 +1535,85 @@ end)
 -- ============================================================
 -- Публичный API
 -- ============================================================
+local listeners = {}
+local nextListenerId = 0
+
+local function BuildRunSnapshot()
+    local bossesCopy = nil
+    if type(state.bosses) == "table" then
+        bossesCopy = {}
+        for i, b in ipairs(state.bosses) do
+            bossesCopy[i] = {
+                name = b.name,
+                killed = b.killed and true or false,
+                killTime = b.killTime,
+            }
+        end
+    end
+    return {
+        running = state.running and true or false,
+        completed = state.completed and true or false,
+        elapsed = state.elapsed,
+        startTime = state.startTime,
+        level = state.level,
+        affixes = state.affixes,
+        dungeonName = state.dungeonName,
+        mapID = state.mapID,
+        bosses = bossesCopy,
+        styleId = (MPT.GetActiveStyleId and MPT:GetActiveStyleId()) or (MPT.db and MPT.db.activeStyle) or "default",
+    }
+end
+
+local function GetDeathsSnapshot()
+    local dOk, d, t = pcall(function() return C_ChallengeMode.GetDeathCount() end)
+    if dOk and type(d) == "number" then
+        return d, (type(t) == "number" and t or (d * 5))
+    end
+    return localDeathCount, localDeathLost
+end
+
+NotifyDisplayChanged = function()
+    if not next(listeners) then return end
+    local payload = MPT:GetDisplayData()
+    for id, fn in pairs(listeners) do
+        local ok = pcall(fn, payload)
+        if not ok then
+            listeners[id] = nil
+        end
+    end
+end
+
+function MPT:GetRunSnapshot()
+    return BuildRunSnapshot()
+end
+
+function MPT:GetDisplayData()
+    local snap = BuildRunSnapshot()
+    local deathCount, deathLost = GetDeathsSnapshot()
+    local isPaused = false
+    if state.running and C_ChallengeMode and C_ChallengeMode.IsPaused then
+        local ok, v = pcall(function() return C_ChallengeMode.IsPaused() end)
+        isPaused = ok and v == true
+    end
+    snap.isPaused = isPaused
+    snap.deathCount = deathCount
+    snap.deathLost = deathLost
+    snap.enemyForces = GetForces()
+    snap.battleResCount = GetBattleResCount()
+    snap.plus2Limit, snap.plus3Limit = GetPlus2Plus3Limits()
+    return snap
+end
+
+function MPT:RegisterDisplayListener(callback)
+    if type(callback) ~= "function" then return nil end
+    nextListenerId = nextListenerId + 1
+    listeners[nextListenerId] = callback
+    return nextListenerId
+end
+
+function MPT:UnregisterDisplayListener(listenerId)
+    listeners[listenerId] = nil
+end
 
 -- ============================================================
 -- Скрытие дефолтного M+ трекера Sirus
@@ -1600,7 +1688,7 @@ end
 
 -- Последний набор affix ID, переданных в RefreshAffixes.
 -- Нужен чтобы RefreshCurrentAffixes работал и в превью, и в активном ключе.
-local lastDisplayedAffixIDs = nil
+lastDisplayedAffixIDs = nil
 
 -- Обновляет строки аффиксов в зависимости от настроек affixText / affixIcons.
 -- Опции независимы: можно показывать обе, одну, или ни одной.
@@ -1968,8 +2056,9 @@ end
 -- ============================================================
 local function GetBossRecord(bossName)
     if not MPT.db or not MPT.db.bossRecords then return nil end
-    local dn = state.dungeonName
-    local lv = state.level
+    local dn = tostring(state.dungeonName)
+    local lv = tonumber(state.level) or 0
+    if lv <= 0 then return end
     if not dn or not lv then return nil end
     local dr = MPT.db.bossRecords[dn]
     local lr = dr and dr[lv]

@@ -4,6 +4,57 @@
 MythicPlusTimer = {}
 local MPT = MythicPlusTimer
 
+local function CopyValue(v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    for k, vv in pairs(v) do
+        out[k] = CopyValue(vv)
+    end
+    return out
+end
+
+local LEGACY_COLOR_KEYS = {
+    "colorTitle",
+    "colorAffixes",
+    "colorTimer",
+    "colorTimerFailed",
+    "colorPlus23",
+    "colorPlus23Expired",
+    "colorPlus23Remaining",
+    "colorBossPending",
+    "colorBossKilled",
+    "colorForcesPct",
+    "colorForcesPull",
+    "forcesColor",
+    "colorDeaths",
+    "colorDeathsPenalty",
+    "colorDeathsIcon",
+    "colorBattleRes",
+    "colorBattleResIcon",
+    "colorButtons",
+}
+
+local LEGACY_STYLE_DEFAULT_COLORS = {
+    colorTitle         = { r = 1,      g = 0.82,  b = 0 },
+    colorAffixes       = { r = 0.67,   g = 0.67,  b = 0.67 },
+    colorTimer         = { r = 1,      g = 1,     b = 1 },
+    colorTimerFailed   = { r = 1,      g = 0.2,   b = 0.2 },
+    colorPlus23        = { r = 1,      g = 1,     b = 1 },
+    colorPlus23Expired = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorPlus23Remaining = { r = 0,    g = 1,     b = 0 },
+    colorBossPending   = { r = 1,      g = 1,     b = 1 },
+    colorBossKilled    = { r = 0.53,   g = 0.53,  b = 0.53 },
+    colorForcesPct     = { r = 1,      g = 1,     b = 1 },
+    colorForcesPull    = { r = 0,      g = 1,     b = 0 },
+    forcesColor        = { r = 0.25,   g = 0.55,  b = 1.0 },
+    colorDeaths        = { r = 1,      g = 1,     b = 1 },
+    colorDeathsPenalty = { r = 1,      g = 0.27,  b = 0.27 },
+    colorDeathsIcon    = { r = 1,      g = 1,     b = 1 },
+    colorBattleRes     = { r = 1,      g = 1,     b = 1 },
+    colorBattleResIcon = { r = 1,      g = 1,     b = 1 },
+    colorButtons       = { r = 1,      g = 1,     b = 1 },
+}
+
 -- Дефолтные значения SavedVariables
 local DB_DEFAULTS = {
     debug        = false,
@@ -21,24 +72,35 @@ local DB_DEFAULTS = {
     forcesTexture = "Blank",
     font = "Friz Quadrata (default)",
     hideDefaultTracker = false,
+    activeStyle = "default",
+    minimap = {
+        hide = false,
+        angle = 220,
+    },
+    styles = {
+        default = {
+            colors = LEGACY_STYLE_DEFAULT_COLORS,
+            options = {},
+        },
+    },
     -- Цвета (кастомизация)
-    colorTitle         = { r = 1,      g = 0.82,  b = 0 },
-    colorAffixes       = { r = 0.67,   g = 0.67,  b = 0.67 },
-    colorTimer         = { r = 1,      g = 1,     b = 1 },
-    colorTimerFailed   = { r = 1,      g = 0.2,   b = 0.2 },
-    colorPlus23        = { r = 1,      g = 1,     b = 1 },
-    colorPlus23Expired = { r = 0.53,   g = 0.53,  b = 0.53 },
-    colorPlus23Remaining = { r = 0,    g = 1,     b = 0 },
-    colorBossPending   = { r = 1,      g = 1,     b = 1 },
-    colorBossKilled    = { r = 0.53,   g = 0.53,  b = 0.53 },
-    colorForcesPct     = { r = 1,      g = 1,     b = 1 },
-    colorForcesPull    = { r = 0,      g = 1,     b = 0 },
-    colorDeaths        = { r = 1,      g = 1,     b = 1 },
-    colorDeathsPenalty = { r = 1,      g = 0.27,  b = 0.27 },
-    colorDeathsIcon    = { r = 1,      g = 1,     b = 1 },
-    colorBattleRes     = { r = 1,      g = 1,     b = 1 },
-    colorBattleResIcon = { r = 1,      g = 1,     b = 1 },
-    colorButtons       = { r = 1,      g = 1,     b = 1 },
+    colorTitle         = LEGACY_STYLE_DEFAULT_COLORS.colorTitle,
+    colorAffixes       = LEGACY_STYLE_DEFAULT_COLORS.colorAffixes,
+    colorTimer         = LEGACY_STYLE_DEFAULT_COLORS.colorTimer,
+    colorTimerFailed   = LEGACY_STYLE_DEFAULT_COLORS.colorTimerFailed,
+    colorPlus23        = LEGACY_STYLE_DEFAULT_COLORS.colorPlus23,
+    colorPlus23Expired = LEGACY_STYLE_DEFAULT_COLORS.colorPlus23Expired,
+    colorPlus23Remaining = LEGACY_STYLE_DEFAULT_COLORS.colorPlus23Remaining,
+    colorBossPending   = LEGACY_STYLE_DEFAULT_COLORS.colorBossPending,
+    colorBossKilled    = LEGACY_STYLE_DEFAULT_COLORS.colorBossKilled,
+    colorForcesPct     = LEGACY_STYLE_DEFAULT_COLORS.colorForcesPct,
+    colorForcesPull    = LEGACY_STYLE_DEFAULT_COLORS.colorForcesPull,
+    colorDeaths        = LEGACY_STYLE_DEFAULT_COLORS.colorDeaths,
+    colorDeathsPenalty = LEGACY_STYLE_DEFAULT_COLORS.colorDeathsPenalty,
+    colorDeathsIcon    = LEGACY_STYLE_DEFAULT_COLORS.colorDeathsIcon,
+    colorBattleRes     = LEGACY_STYLE_DEFAULT_COLORS.colorBattleRes,
+    colorBattleResIcon = LEGACY_STYLE_DEFAULT_COLORS.colorBattleResIcon,
+    colorButtons       = LEGACY_STYLE_DEFAULT_COLORS.colorButtons,
 }
 
 local CHAR_DB_DEFAULTS = {}
@@ -54,7 +116,7 @@ initFrame:SetScript("OnEvent", function(self, _, addonName)
     end
     for k, v in pairs(DB_DEFAULTS) do
         if MythicPlusTimerDB[k] == nil then
-            MythicPlusTimerDB[k] = v
+            MythicPlusTimerDB[k] = CopyValue(v)
         end
     end
 
@@ -76,27 +138,69 @@ end)
 
 -- Дефолты цветов для сброса в настройках (копия ключей из DB_DEFAULTS)
 MPT.COLOR_DEFAULTS = {
-    colorTitle         = { r = 1,      g = 0.82,  b = 0 },
-    colorAffixes       = { r = 0.67,   g = 0.67,  b = 0.67 },
-    colorTimer         = { r = 1,      g = 1,     b = 1 },
-    colorTimerFailed   = { r = 1,      g = 0.2,   b = 0.2 },
-    colorPlus23        = { r = 1,      g = 1,     b = 1 },
-    colorPlus23Expired = { r = 0.53,   g = 0.53,  b = 0.53 },
-    colorPlus23Remaining = { r = 0,   g = 1,     b = 0 },
-    colorBossPending   = { r = 1,      g = 1,     b = 1 },
-    colorBossKilled    = { r = 0.53,   g = 0.53,  b = 0.53 },
-    colorForcesPct     = { r = 1,      g = 1,     b = 1 },
-    colorForcesPull    = { r = 0,      g = 1,     b = 0 },
-    forcesColor        = { r = 0.25,   g = 0.55,  b = 1.0 },
-    colorDeaths        = { r = 1,      g = 1,     b = 1 },
-    colorDeathsPenalty = { r = 1,      g = 0.27,  b = 0.27 },
-    colorDeathsIcon    = { r = 1,      g = 1,     b = 1 },
-    colorBattleRes     = { r = 1,      g = 1,     b = 1 },
-    colorBattleResIcon = { r = 1,      g = 1,     b = 1 },
-    colorButtons       = { r = 1,      g = 1,     b = 1 },
+    colorTitle         = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorTitle),
+    colorAffixes       = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorAffixes),
+    colorTimer         = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorTimer),
+    colorTimerFailed   = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorTimerFailed),
+    colorPlus23        = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorPlus23),
+    colorPlus23Expired = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorPlus23Expired),
+    colorPlus23Remaining = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorPlus23Remaining),
+    colorBossPending   = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorBossPending),
+    colorBossKilled    = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorBossKilled),
+    colorForcesPct     = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorForcesPct),
+    colorForcesPull    = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorForcesPull),
+    forcesColor        = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.forcesColor),
+    colorDeaths        = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorDeaths),
+    colorDeathsPenalty = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorDeathsPenalty),
+    colorDeathsIcon    = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorDeathsIcon),
+    colorBattleRes     = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorBattleRes),
+    colorBattleResIcon = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorBattleResIcon),
+    colorButtons       = CopyValue(LEGACY_STYLE_DEFAULT_COLORS.colorButtons),
 }
 
+function MPT:EnsureStyleState()
+    if not self.db then return end
+    if type(self.db.activeStyle) ~= "string" or self.db.activeStyle == "" then
+        self.db.activeStyle = "default"
+    end
+    if type(self.db.styles) ~= "table" then
+        self.db.styles = {}
+    end
+    if type(self.db.styles.default) ~= "table" then
+        self.db.styles.default = {}
+    end
+    if type(self.db.styles.default.colors) ~= "table" then
+        self.db.styles.default.colors = {}
+    end
+    if type(self.db.styles.default.options) ~= "table" then
+        self.db.styles.default.options = {}
+    end
+
+    local colors = self.db.styles.default.colors
+    for _, key in ipairs(LEGACY_COLOR_KEYS) do
+        local c = colors[key]
+        if type(c) ~= "table" or type(c.r) ~= "number" or type(c.g) ~= "number" or type(c.b) ~= "number" then
+            local legacy = self.db[key]
+            if type(legacy) == "table" and type(legacy.r) == "number" and type(legacy.g) == "number" and type(legacy.b) == "number" then
+                colors[key] = { r = legacy.r, g = legacy.g, b = legacy.b }
+            else
+                local def = self.COLOR_DEFAULTS[key]
+                if def then
+                    colors[key] = { r = def.r, g = def.g, b = def.b }
+                end
+            end
+        end
+    end
+end
+
 function MPT:Init()
+    self:EnsureStyleState()
+    if self.InitStyleRegistry then
+        self:InitStyleRegistry()
+    end
+    if self.ApplyStyle then
+        self:ApplyStyle(self.db and self.db.activeStyle or "default")
+    end
     if self.LoadTimerPosition then
         self:LoadTimerPosition()
     end
@@ -104,6 +208,7 @@ function MPT:Init()
     if self.RefreshFont           then self:RefreshFont()          end
     if self.ApplyButtonColors     then self:ApplyButtonColors()     end
     if self.ApplyDeathsBrIconColors then self:ApplyDeathsBrIconColors() end
+    if self.InitMinimapButton then self:InitMinimapButton() end
 end
 
 function MPT:Print(msg)
@@ -127,7 +232,14 @@ SLASH_MPT1 = "/mpt"
 SlashCmdList["MPT"] = function(msg)
     local cmd = msg:lower():match("^(%S+)")
 
-    if cmd == "debug" then
+    if not cmd or cmd == "" then
+        if MPT.ToggleConfigWindow then
+            MPT:ToggleConfigWindow()
+        else
+            MPT:Print("Окно настроек пока недоступно.")
+        end
+
+    elseif cmd == "debug" then
         MPT.db.debug = not MPT.db.debug
         MPT:Print("Debug: " .. (MPT.db.debug and "ON" or "OFF"))
 
@@ -171,7 +283,14 @@ SlashCmdList["MPT"] = function(msg)
         end
         if found == 0 then MPT:Print("Ничего не найдено. Попробуй во время активного ключа.") end
 
+    elseif cmd == "options" or cmd == "config" then
+        if MPT.ToggleConfigWindow then
+            MPT:ToggleConfigWindow()
+        else
+            MPT:Print("Окно настроек пока недоступно.")
+        end
+
     else
-        MPT:Print("Команды: /mpt debug | reset | timer | preview | kills | findframes")
+        MPT:Print("Команды: /mpt | config | debug | reset | timer | preview | kills | findframes")
     end
 end
