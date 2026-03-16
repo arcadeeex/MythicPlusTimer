@@ -2207,7 +2207,8 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
             for _, boss in ipairs(state.bosses) do
                 if boss.name == bossName then
                     boss.killed   = true
-                    boss.killTime = state.elapsed  -- время от старта ключа до убийства босса
+                    -- GetTime() даёт актуальное значение прямо сейчас, а не из прошлого OnUpdate-кадра
+                    boss.killTime = state.startTime and (GetTime() - state.startTime) or state.elapsed
                     UpdateBossRecord(boss.name, boss.killTime)
                     break
                 end

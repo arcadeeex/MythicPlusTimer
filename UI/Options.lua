@@ -650,14 +650,60 @@ optInitFrame:SetScript("OnEvent", function(self)
         end
     end)
 
+    -- ScrollFrame для списка цветов.
+    -- Используем фиксированные размеры: GetWidth() = 0 на момент создания (фрейм ещё не выложен).
+    local SCROLL_W = 440
+    local SCROLL_H = 380
+
+    local colorScrollFrame = CreateFrame("ScrollFrame", "MPTColorScrollFrame", panelColors)
+    colorScrollFrame:SetPoint("TOPLEFT", colorsTitle, "BOTTOMLEFT", 0, -8)
+    colorScrollFrame:SetSize(SCROLL_W, SCROLL_H)
+    colorScrollFrame:EnableMouseWheel(true)
+
+    local colorScrollChild = CreateFrame("Frame", nil, colorScrollFrame)
+    colorScrollChild:SetWidth(SCROLL_W)
+    colorScrollChild:SetHeight(1)  -- будет пересчитано после создания строк
+    colorScrollFrame:SetScrollChild(colorScrollChild)
+
+    colorScrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local current = self:GetVerticalScroll()
+        local maxScroll = self:GetVerticalScrollRange()
+        local new = current - delta * 28
+        if new < 0 then new = 0 end
+        if new > maxScroll then new = maxScroll end
+        self:SetVerticalScroll(new)
+    end)
+
+    -- Полоса прокрутки
+    local colorScrollBar = CreateFrame("Slider", "MPTColorScrollBar", panelColors, "UIPanelScrollBarTemplate")
+    colorScrollBar:SetPoint("TOPLEFT", colorScrollFrame, "TOPRIGHT", 4, -16)
+    colorScrollBar:SetPoint("BOTTOMLEFT", colorScrollFrame, "BOTTOMRIGHT", 4, 16)
+    colorScrollBar:SetMinMaxValues(0, 0)
+    colorScrollBar:SetValueStep(28)
+    colorScrollBar:SetValue(0)
+    colorScrollBar:SetScript("OnValueChanged", function(self, value)
+        colorScrollFrame:SetVerticalScroll(value)
+    end)
+    colorScrollFrame:SetScript("OnScrollRangeChanged", function(self, _, yRange)
+        local maxVal = yRange or 0
+        colorScrollBar:SetMinMaxValues(0, maxVal)
+        local cur = colorScrollBar:GetValue()
+        if cur > maxVal then colorScrollBar:SetValue(maxVal) end
+        if maxVal <= 0 then colorScrollBar:Hide() else colorScrollBar:Show() end
+    end)
+
     local colorSwatches = {}
-    local prevAnchor = colorsTitle
+    local prevAnchor = colorScrollChild
     local SWATCH_W, SWATCH_H = 30, 20
     local ROW_SPACING = -8
     for i, opt in ipairs(COLOR_OPTIONS) do
-        local swatch = CreateFrame("Button", nil, panelColors)
+        local swatch = CreateFrame("Button", nil, colorScrollChild)
         swatch:SetSize(SWATCH_W, SWATCH_H)
-        swatch:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, i == 1 and -12 or ROW_SPACING)
+        if i == 1 then
+            swatch:SetPoint("TOPLEFT", prevAnchor, "TOPLEFT", 0, -4)
+        else
+            swatch:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, ROW_SPACING)
+        end
         local border = swatch:CreateTexture(nil, "BORDER")
         border:SetAllPoints()
         border:SetTexture("Interface\\Buttons\\UI-Quickslot2")
@@ -668,7 +714,7 @@ optInitFrame:SetScript("OnEvent", function(self)
         swatch.tex = tex
         swatch.key = opt.key
 
-        local label = panelColors:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        local label = colorScrollChild:CreateFontString(nil, "ARTWORK", "GameFontNormal")
         label:SetPoint("LEFT", swatch, "RIGHT", 8, 0)
         label:SetText(opt.label)
         label:SetTextColor(1, 1, 1)
@@ -737,7 +783,7 @@ optInitFrame:SetScript("OnEvent", function(self)
         prevAnchor = swatch
     end
 
-    local resetColorsBtn = CreateFrame("Button", nil, panelColors, "UIPanelButtonTemplate")
+    local resetColorsBtn = CreateFrame("Button", nil, colorScrollChild, "UIPanelButtonTemplate")
     resetColorsBtn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -14)
     resetColorsBtn:SetWidth(240)
     resetColorsBtn:SetHeight(22)
@@ -764,7 +810,30 @@ optInitFrame:SetScript("OnEvent", function(self)
     end)
     resetColorsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    -- Высота контента: все строки + отступы + кнопка
+    local rowH = SWATCH_H - ROW_SPACING  -- 20 + 8 = 28px на строку
+    local totalH = (#COLOR_OPTIONS * rowH) + (22 + 14)  -- строки + кнопка с отступом
+    colorScrollChild:SetHeight(totalH)
+
     panelColors:SetScript("OnShow", function()
+        -- InterfaceOptions sub-panels имеют GetWidth()=0 в WotLK — читаем размеры из контейнера
+        local container = _G["InterfaceOptionsFramePanelContainer"]
+        if container then
+            local cW    = container:GetWidth()
+            local cH    = container:GetHeight()
+            local titleH = colorsTitle:GetHeight() or 20
+            if cW > 60 then
+                local newW = cW - 16 - 20           -- 16px левый отступ + 20px скроллбар
+                local newH = cH - titleH - 16 - 8 - 16  -- top + title + gap + bottom margin
+                if newH < 80 then newH = 80 end
+                colorScrollFrame:SetWidth(newW)
+                colorScrollChild:SetWidth(newW)
+                colorScrollFrame:SetHeight(newH)
+            end
+        end
+
+        colorScrollFrame:SetVerticalScroll(0)
+        colorScrollBar:SetValue(0)
         for _, row in ipairs(colorSwatches) do
             row.update()
         end
