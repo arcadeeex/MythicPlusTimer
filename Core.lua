@@ -34,6 +34,14 @@ local LEGACY_COLOR_KEYS = {
     "colorButtons",
 }
 
+local LEGACY_STYLE_OPTION_DEFAULTS = {
+    font = "Friz Quadrata (default)",
+    scale = 1.0,
+    forcesTexture = "Blank",
+    affixText = true,
+    affixIcons = false,
+}
+
 local LEGACY_STYLE_DEFAULT_COLORS = {
     colorTitle         = { r = 1,      g = 0.82,  b = 0 },
     colorAffixes       = { r = 0.67,   g = 0.67,  b = 0.67 },
@@ -80,7 +88,7 @@ local DB_DEFAULTS = {
     styles = {
         default = {
             colors = LEGACY_STYLE_DEFAULT_COLORS,
-            options = {},
+            options = LEGACY_STYLE_OPTION_DEFAULTS,
         },
     },
     -- Цвета (кастомизация)
@@ -191,6 +199,55 @@ function MPT:EnsureStyleState()
             end
         end
     end
+
+    local opts = self.db.styles.default.options
+    for key, defVal in pairs(LEGACY_STYLE_OPTION_DEFAULTS) do
+        if opts[key] == nil then
+            local legacyVal = self.db[key]
+            if legacyVal ~= nil then
+                opts[key] = legacyVal
+            else
+                opts[key] = CopyValue(defVal)
+            end
+        end
+    end
+end
+
+function MPT:GetStyleOption(key, fallback, styleId)
+    if self.GetStyleOptionFor and self.GetStyleOptionFor ~= MPT.GetStyleOption then
+        return self:GetStyleOptionFor(styleId or (self.GetActiveStyleId and self:GetActiveStyleId()) or "default", key, fallback)
+    end
+    if self.GetStyleOptionFor then
+        return self:GetStyleOptionFor(styleId or "default", key, fallback)
+    end
+    if self.db and self.db.styles and self.db.styles.default and self.db.styles.default.options then
+        local v = self.db.styles.default.options[key]
+        if v ~= nil then return v end
+    end
+    return fallback
+end
+
+function MPT:SetStyleOption(key, value, styleId)
+    if self.SetStyleOptionFor then
+        return self:SetStyleOptionFor(styleId or (self.GetActiveStyleId and self:GetActiveStyleId()) or "default", key, value)
+    end
+    if not self.db then return end
+    if type(self.db.styles) ~= "table" then self.db.styles = {} end
+    local sid = styleId or "default"
+    if type(self.db.styles[sid]) ~= "table" then self.db.styles[sid] = {} end
+    if type(self.db.styles[sid].options) ~= "table" then self.db.styles[sid].options = {} end
+    self.db.styles[sid].options[key] = value
+end
+
+function MPT:GetActiveStyleOptions()
+    local sid = (self.GetActiveStyleId and self:GetActiveStyleId()) or (self.db and self.db.activeStyle) or "default"
+    if self.GetStyleOptionsFor then
+        return self:GetStyleOptionsFor(sid)
+    end
+    if self.db and self.db.styles and self.db.styles[sid] then
+        return self.db.styles[sid].options or {}
+    end
+    return {}
 end
 
 function MPT:Init()

@@ -99,6 +99,20 @@ local function GetColor(key)
     return 1, 1, 1
 end
 
+local function GetStyleOption(key, fallback)
+    if MPT.GetStyleOption then
+        return MPT:GetStyleOption(key, fallback)
+    end
+    if MPT.db and MPT.db[key] ~= nil then
+        return MPT.db[key]
+    end
+    return fallback
+end
+
+local function IsSecondStyle()
+    return MPT.GetActiveStyleId and MPT:GetActiveStyleId() == "second"
+end
+
 local function RGBToHex(r, g, b)
     return string.format("|cff%02x%02x%02x", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
 end
@@ -121,6 +135,15 @@ local function FormatCountdown(sec)
     end
     return string.format("%d:%02d", math.floor(sec / 60), math.floor(sec % 60))
 end
+
+local function GetCurrentStyleId()
+    if MPT.GetActiveStyleId then
+        return MPT:GetActiveStyleId() or "default"
+    end
+    return (MPT.db and MPT.db.activeStyle) or "default"
+end
+
+local SaveTimerPosition
 
 -- Подтверждено: возвращает ОДНО значение = % (0-100)
 local function GetForces()
@@ -232,6 +255,19 @@ frame:SetClampedToScreen(true)
 frame:SetMovable(true)
 frame:EnableMouse(true)
 
+SaveTimerPosition = function()
+    if not MPT.charDb then return end
+    local x = frame:GetLeft() or 0
+    local y = frame:GetTop() or 0
+    local sid = GetCurrentStyleId()
+    if type(MPT.charDb.timerPosByStyle) ~= "table" then
+        MPT.charDb.timerPosByStyle = {}
+    end
+    MPT.charDb.timerPosByStyle[sid] = { x = x, y = y }
+    -- Backward compatibility: keep legacy slot updated
+    MPT.charDb.timerPos = { x = x, y = y }
+end
+
 -- Лёгкий тёмный фон для читаемости текста (прозрачный)
 local bg = frame:CreateTexture(nil, "BACKGROUND")
 bg:SetAllPoints(frame)
@@ -275,7 +311,7 @@ local MAX_AFFIX_ICONS = 8
 -- Краткие названия подземелий по mapID (для заголовка и свёрнутого режима)
 local shortDungeonName = {
     [4]  = "Крепость Утгард",
-    [5]  = "Бастионы Адского Пламени",
+    [5]  = "Бастионы",
     [6]  = "Узилище",
     [8]  = "Крепость Драк'Тарон",
     [9]  = "Чертоги Молний",
@@ -343,6 +379,60 @@ frame.plus3:SetTextColor(1, 1, 1)
 frame.plus3:SetText("")
 frame.plus3:Hide()
 
+-- Second-style timer bar (elapsed/base + +2/+3 marks)
+frame.timerBarContainer = CreateFrame("Frame", nil, frame)
+frame.timerBarContainer:SetHeight(16)
+frame.timerBarContainer:Hide()
+
+local tbBg = frame.timerBarContainer:CreateTexture(nil, "BACKGROUND")
+tbBg:SetAllPoints(frame.timerBarContainer)
+tbBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+tbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
+
+frame.timerBarFill = CreateFrame("Frame", nil, frame.timerBarContainer)
+frame.timerBarFill:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", 1, -1)
+frame.timerBarFill:SetWidth(1)
+frame.timerBarFill:SetHeight(14)
+local tbFill = frame.timerBarFill:CreateTexture(nil, "ARTWORK")
+tbFill:SetAllPoints(frame.timerBarFill)
+tbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+tbFill:SetVertexColor(1.0, 0.93, 0.10, 0.95)
+
+local tbTextFrame = CreateFrame("Frame", nil, frame.timerBarContainer)
+tbTextFrame:SetAllPoints(frame.timerBarContainer)
+tbTextFrame:SetFrameLevel(frame.timerBarContainer:GetFrameLevel() + 20)
+frame.timerBar = {}
+frame.timerBar.text = tbTextFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+frame.timerBar.text:SetPoint("LEFT", tbTextFrame, "LEFT", 4, 0)
+frame.timerBar.text:SetPoint("RIGHT", tbTextFrame, "RIGHT", -4, 0)
+frame.timerBar.text:SetJustifyH("LEFT")
+frame.timerBar.text:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+frame.timerBar.text:SetTextColor(1, 1, 1)
+
+frame.timerBarMark2 = frame.timerBarContainer:CreateTexture(nil, "OVERLAY")
+frame.timerBarMark2:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.timerBarMark2:SetSize(2, 16)
+frame.timerBarMark2:SetVertexColor(0, 0, 0, 1)
+frame.timerBarMark2:Hide()
+
+frame.timerBarMark3 = frame.timerBarContainer:CreateTexture(nil, "OVERLAY")
+frame.timerBarMark3:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.timerBarMark3:SetSize(2, 16)
+frame.timerBarMark3:SetVertexColor(0, 0, 0, 1)
+frame.timerBarMark3:Hide()
+
+frame.timerBarPlus2 = tbTextFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.timerBarPlus2:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.timerBarPlus2:SetJustifyH("LEFT")
+frame.timerBarPlus2:SetDrawLayer("OVERLAY", 7)
+frame.timerBarPlus2:Hide()
+
+frame.timerBarPlus3 = tbTextFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.timerBarPlus3:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.timerBarPlus3:SetJustifyH("LEFT")
+frame.timerBarPlus3:SetDrawLayer("OVERLAY", 7)
+frame.timerBarPlus3:Hide()
+
 
 -- Строки боссов: динамическая высота (16px = 1 строка, 28px = 2 строки с переносом)
 -- Позиции пересчитываются в UpdateBossLayout после каждого SetText на строке
@@ -352,6 +442,7 @@ local BOSS_LINE_H2    = 28  -- две строки
 local BOSS_FIRST_OFFSET = 8  -- отступ от top блока боссов до первой строки
 local FRAME_INNER_W   = 264   -- 280 - 2*8 (горизонтальные отступы)
 frame.bossLines = {}
+frame.bossRightLines = {}
 frame.bossLineH = {}  -- текущая высота каждой строки (16 или 28)
 for i = 1, MAX_BOSSES do
     local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -363,6 +454,16 @@ for i = 1, MAX_BOSSES do
     fs:SetText("")
     fs:Hide()
     frame.bossLines[i] = fs
+
+    local right = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    right:SetJustifyH("RIGHT")
+    right:SetWordWrap(false)
+    right:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    right:SetTextColor(1, 1, 1)
+    right:SetText("")
+    right:Hide()
+    frame.bossRightLines[i] = right
+
     frame.bossLineH[i] = BOSS_LINE_H1
 end
 
@@ -609,7 +710,7 @@ local function ApplyForcesColor()
 end
 
 local function ApplyForcesTexture()
-    local name = MPT.db and MPT.db.forcesTexture or "Blank"
+    local name = GetStyleOption("forcesTexture", "Blank")
     fbFill:SetTexture(GetBarTexturePath(name))
     ApplyForcesColor()
 end
@@ -654,10 +755,16 @@ function MPT:RefreshAllColors()
     ApplyForcesColor()
     self:ApplyButtonColors()
     self:ApplyDeathsBrIconColors()
+    if IsSecondStyle() then
+        local bgr, bgg, bgb = GetColor("colorBackground")
+        bg:SetVertexColor(bgr, bgg, bgb, 0.72)
+        local tr, tg, tb = GetColor("colorTimer")
+        frame.timerBar.text:SetTextColor(tr, tg, tb)
+    end
     if state.level and (state.dungeonName or state.mapID) then
         local lvlStr = "+" .. state.level
         local name  = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
-        lastTitleText = string.format("%s%s \226\128\148 %s|r", RGBToHex(GetColor("colorTitle")), lvlStr, name)
+        lastTitleText = string.format("%s%s %s|r", RGBToHex(GetColor("colorTitle")), lvlStr, name)
         frame.title:SetText(lastTitleText)
     end
     if lastDisplayedAffixIDs and #lastDisplayedAffixIDs > 0 then
@@ -676,7 +783,7 @@ local function GetFontPath(name)
 end
 
 local function ApplyFont()
-    local path = GetFontPath(MPT.db and MPT.db.font or "Friz Quadrata (default)")
+    local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
     frame.title:SetFont(path, 13, "")
     frame.affixes:SetFont(path, 11, "")
     frame.affixesLine2:SetFont(path, 11, "")
@@ -684,13 +791,33 @@ local function ApplyFont()
     frame.pauseLabel:SetFont(path, 20, "")
     frame.plus2:SetFont(path, 12, "")
     frame.plus3:SetFont(path, 12, "")
+    frame.timerBar.text:SetFont(path, 12, "")
+    frame.timerBarPlus2:SetFont(path, 11, "")
+    frame.timerBarPlus3:SetFont(path, 11, "")
     for i = 1, MAX_BOSSES do
         frame.bossLines[i]:SetFont(path, 11, "")
+        frame.bossRightLines[i]:SetFont(path, 11, "")
     end
     frame.forces:SetFont(path, 11, "")
     frame.forcesBar.text:SetFont(path, 11, "")
     frame.deaths:SetFont(path, 11, "")
     frame.battleRes:SetFont(path, 11, "")
+
+    -- Second style keeps outlined/shadowed overlay text even after font switch.
+    if IsSecondStyle() then
+        frame.timerBar.text:SetFont(path, 13, "OUTLINE")
+        frame.timerBarPlus2:SetFont(path, 11, "OUTLINE")
+        frame.timerBarPlus3:SetFont(path, 11, "OUTLINE")
+        frame.forcesBar.text:SetFont(path, 11, "OUTLINE")
+        frame.forcesBar.text:SetShadowOffset(1, -1)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, 1)
+        for i = 1, MAX_BOSSES do
+            frame.bossRightLines[i]:SetFont(path, 12, "OUTLINE")
+        end
+    else
+        frame.forcesBar.text:SetShadowOffset(0, 0)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, 0)
+    end
 end
 
 function MPT:RefreshFont()
@@ -752,6 +879,7 @@ local forfeitBtn = CreateFrame("Button", nil, frame)
 forfeitBtn:SetWidth(12)
 forfeitBtn:SetHeight(12)
 forfeitBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 14)
+forfeitBtn:SetFrameLevel(frame:GetFrameLevel() + 20)
 local forfeitTex = forfeitBtn:CreateTexture(nil, "ARTWORK")
 forfeitTex:SetAllPoints(forfeitBtn)
 forfeitTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\forfeit.blp")
@@ -771,6 +899,7 @@ local pauseBtn = CreateFrame("Button", nil, frame)
 pauseBtn:SetWidth(12)
 pauseBtn:SetHeight(12)
 pauseBtn:SetPoint("BOTTOMRIGHT", forfeitBtn, "BOTTOMLEFT", -4, 0)
+pauseBtn:SetFrameLevel(frame:GetFrameLevel() + 20)
 local pauseTex = pauseBtn:CreateTexture(nil, "ARTWORK")
 pauseTex:SetAllPoints(pauseBtn)
 pauseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\pause.blp")
@@ -795,6 +924,7 @@ collapseBtn:SetWidth(10)
 collapseBtn:SetHeight(10)
 -- Выравнивание по вертикали с заголовком (title: -6, шрифт 13px → центр ~12.5; кнопка 10px → top -8)
 collapseBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -8)
+collapseBtn:SetFrameLevel(frame:GetFrameLevel() + 30)
 local collapseTex = collapseBtn:CreateTexture(nil, "ARTWORK")
 collapseTex:SetAllPoints(collapseBtn)
 collapseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\minus.blp")
@@ -807,6 +937,7 @@ local forfeitSmall = CreateFrame("Button", nil, frame)
 forfeitSmall:SetWidth(10)
 forfeitSmall:SetHeight(10)
 forfeitSmall:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -8)
+forfeitSmall:SetFrameLevel(frame:GetFrameLevel() + 20)
 forfeitSmall:Hide()
 local forfeitSmallTex = forfeitSmall:CreateTexture(nil, "ARTWORK")
 forfeitSmallTex:SetAllPoints(forfeitSmall)
@@ -826,6 +957,7 @@ local pauseSmall = CreateFrame("Button", nil, frame)
 pauseSmall:SetWidth(10)
 pauseSmall:SetHeight(10)
 pauseSmall:SetPoint("TOPRIGHT", forfeitSmall, "TOPLEFT", -3, 0)
+pauseSmall:SetFrameLevel(frame:GetFrameLevel() + 20)
 pauseSmall:Hide()
 local pauseSmallTex = pauseSmall:CreateTexture(nil, "ARTWORK")
 pauseSmallTex:SetAllPoints(pauseSmall)
@@ -876,6 +1008,19 @@ local savedPlus2Shown = false
 local savedPlus3Shown = false
 
 local function SetCollapsed(isCollapsed)
+    if IsSecondStyle() then
+        collapsed = false
+        collapseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\minus.blp")
+        frame:SetHeight(expandedHeight)
+        frame.timerBarContainer:Show()
+        forfeitBtn:Show()
+        pauseBtn:Show()
+        forfeitSmall:Hide()
+        pauseSmall:Hide()
+        titleTooltipFrame:EnableMouse(true)
+        affixTooltipFrame:EnableMouse(true)
+        return
+    end
     collapsed = isCollapsed
     if isCollapsed then
         collapseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\plus.blp")
@@ -901,7 +1046,11 @@ local function SetCollapsed(isCollapsed)
         frame.timer:Hide()
         frame.plus2:Hide()
         frame.plus3:Hide()
+        frame.timerBarContainer:Hide()
+        frame.timerBarPlus2:Hide()
+        frame.timerBarPlus3:Hide()
         for i = 1, MAX_BOSSES do frame.bossLines[i]:Hide() end
+        for i = 1, MAX_BOSSES do frame.bossRightLines[i]:Hide() end
         frame.forces:Hide()
         frame.forcesBarContainer:Hide()
         frame.deathsIcon:Hide()
@@ -980,7 +1129,10 @@ local function SetCollapsed(isCollapsed)
 
         -- Показываем обязательные элементы
         frame.timer:Show()
-        SetForcesMode(MPT.db and MPT.db.forcesBar or false)
+        frame.timerBarContainer:Hide()
+        frame.timerBarPlus2:Hide()
+        frame.timerBarPlus3:Hide()
+        SetForcesMode((MPT.db and MPT.db.forcesBar or false) or IsSecondStyle())
         frame.deathsIcon:Show()
         frame.deaths:Show()
         frame.battleRes:Show()
@@ -1012,9 +1164,11 @@ local function SetCollapsed(isCollapsed)
 end
 
 collapseBtn:SetScript("OnClick", function()
+    if IsSecondStyle() then return end
     SetCollapsed(not collapsed)
 end)
 collapseBtn:SetScript("OnEnter", function(self)
+    if IsSecondStyle() then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine(collapsed and "Развернуть" or "Свернуть" --[[@as string]], 1, 1, 1, 1)
@@ -1025,16 +1179,14 @@ collapseBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 -- Зона перетаскивания: весь фрейм (без тултипа аффиксов)
 titleTooltipFrame = CreateFrame("Frame", nil, frame)
 titleTooltipFrame:SetPoint("TOPLEFT",  frame, "TOPLEFT",  0, 0)
-titleTooltipFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, -64)
+titleTooltipFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", -44, -64)
 titleTooltipFrame:EnableMouse(true)
 titleTooltipFrame:SetScript("OnMouseDown", function(_, button)
     if button == "LeftButton" and not (MPT.db and MPT.db.locked) then frame:StartMoving() end
 end)
 titleTooltipFrame:SetScript("OnMouseUp", function()
     frame:StopMovingOrSizing()
-    if MPT.charDb then
-        MPT.charDb.timerPos = { x = frame:GetLeft() or 0, y = frame:GetTop() or 0 }
-    end
+    SaveTimerPosition()
 end)
 
 -- Вспомогательная функция тултипа аффиксов (используется в affixTooltipFrame и иконках)
@@ -1089,9 +1241,7 @@ affixTooltipFrame:SetScript("OnMouseDown", function(_, button)
 end)
 affixTooltipFrame:SetScript("OnMouseUp", function()
     frame:StopMovingOrSizing()
-    if MPT.charDb then
-        MPT.charDb.timerPos = { x = frame:GetLeft() or 0, y = frame:GetTop() or 0 }
-    end
+    SaveTimerPosition()
 end)
 affixTooltipFrame:SetScript("OnEnter", function(self)
     ShowAffixTooltip(self)
@@ -1116,6 +1266,70 @@ local function UpdateBossLayout(count, bossTopY)
     bossTopY = bossTopY or lastBossTopY
     lastBossTopY = bossTopY
     lastBossCount = count
+
+    if IsSecondStyle() then
+        local rowH = 19
+        local forcesH = 16
+        local timerBarTop = -24
+        local bossTop = timerBarTop - 23
+        local rightW = 118
+        local leftW = math.max(110, frame:GetWidth() - rightW - 18)
+
+        frame.timerBarContainer:ClearAllPoints()
+        frame.timerBarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, timerBarTop)
+        frame.timerBarContainer:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, timerBarTop)
+
+        for i = 1, count do
+            local y = bossTop - (i - 1) * rowH
+            local left = frame.bossLines[i]
+            left:ClearAllPoints()
+            left:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, y)
+            left:SetWidth(leftW)
+            left:SetWordWrap(false)
+
+            local right = frame.bossRightLines[i]
+            right:ClearAllPoints()
+            right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, y)
+            right:SetWidth(rightW)
+            right:Show()
+        end
+        for i = count + 1, MAX_BOSSES do
+            frame.bossRightLines[i]:Hide()
+        end
+
+        local forcesY = bossTop - count * rowH - 2
+        frame.forcesBarContainer:ClearAllPoints()
+        frame.forcesBarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, forcesY)
+        frame.forcesBarContainer:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, forcesY)
+
+        local btnSize = 10
+        local btnGap = 6
+        local bottomPad = 1
+        forfeitBtn:SetSize(btnSize, btnSize)
+        pauseBtn:SetSize(btnSize, btnSize)
+        forfeitBtn:ClearAllPoints()
+        forfeitBtn:SetPoint("TOPRIGHT", frame.forcesBarContainer, "BOTTOMRIGHT", 0, -btnGap)
+        pauseBtn:ClearAllPoints()
+        pauseBtn:SetPoint("RIGHT", forfeitBtn, "LEFT", -4, 0)
+
+        local controlsBottom = forcesY - forcesH - btnGap - forfeitBtn:GetHeight()
+        local bottomY = controlsBottom - bottomPad
+        frame:SetHeight(-bottomY + 8)
+        return
+    end
+
+    for i = 1, MAX_BOSSES do
+        frame.bossRightLines[i]:Hide()
+        local left = frame.bossLines[i]
+        left:SetWidth(FRAME_INNER_W)
+        left:SetWordWrap(true)
+    end
+    forfeitBtn:SetSize(12, 12)
+    pauseBtn:SetSize(12, 12)
+    forfeitBtn:ClearAllPoints()
+    forfeitBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 14)
+    pauseBtn:ClearAllPoints()
+    pauseBtn:SetPoint("BOTTOMRIGHT", forfeitBtn, "BOTTOMLEFT", -4, 0)
     local forcesY, deathsY
     local FORCES_BAR_H = 16  -- высота бара (должна совпадать с SetHeight выше)
     if count == 0 then
@@ -1163,11 +1377,18 @@ end
 
 local function SetBossCount(count)
     count = math.max(0, math.min(count, MAX_BOSSES))
+    local secondStyle = IsSecondStyle()
     for i = 1, MAX_BOSSES do
         if i <= count then
             frame.bossLines[i]:Show()
+            if secondStyle then
+                frame.bossRightLines[i]:Show()
+            else
+                frame.bossRightLines[i]:Hide()
+            end
         else
             frame.bossLines[i]:Hide()
+            frame.bossRightLines[i]:Hide()
         end
     end
     UpdateBossLayout(count)
@@ -1185,12 +1406,7 @@ end)
 
 frame:SetScript("OnMouseUp", function(self)
     self:StopMovingOrSizing()
-    if MPT.charDb then
-        MPT.charDb.timerPos = {
-            x = self:GetLeft() or 0,
-            y = self:GetTop()  or 0,
-        }
-    end
+    SaveTimerPosition()
 end)
 
 -- ============================================================
@@ -1212,7 +1428,7 @@ local function UpdateTimerLayout(showPlus2, showPlus3)
         local line2H = math.max(14, frame.affixesLine2:GetStringHeight() or 14)
         affixBottom = affixBottom - 4 - line2H
     end
-    if frame.affixesIcons:IsShown() then
+    if frame.affixesIcons:IsShown() and not IsSecondStyle() then
         affixBottom = affixBottom - 8 - AFFIX_ICON_SIZE
     end
     local timerY = affixBottom
@@ -1255,6 +1471,9 @@ local function UpdateTimerLayout(showPlus2, showPlus3)
 end
 
 SetForcesMode = function(useBar)
+    if IsSecondStyle() then
+        useBar = true
+    end
     if useBar then
         frame.forces:Hide()
         frame.forcesBarContainer:Show()
@@ -1324,10 +1543,18 @@ UpdateDisplay = function()
     -- Таймер
     local useReverse = MPT.db and MPT.db.reverseTimer
     local active = state.running or state.completed
+    local secondStyle = IsSecondStyle()
+    local displayTimerText = "--:--"
     if active and state.elapsed then
         local timerText
         local overBase = baseLimit and (effElapsed > baseLimit)
-        if useReverse then
+        if secondStyle then
+            if baseLimit then
+                timerText = FormatTime(effElapsed) .. "/" .. FormatTime(baseLimit)
+            else
+                timerText = FormatTime(effElapsed)
+            end
+        elseif useReverse then
             -- Обратный режим (текущий): elapsed+deaths / baseLimit
             local elapsedStr = FormatTime(effElapsed)
             local limitStr   = baseLimit and FormatTime(baseLimit) or nil
@@ -1361,9 +1588,133 @@ UpdateDisplay = function()
             end
             frame.timer:SetText(timerText)
         end
+        displayTimerText = timerText
     else
         frame.timer:SetTextColor(0.5, 0.5, 0.5)
         frame.timer:SetText("--:--")
+        displayTimerText = "--:--"
+    end
+
+    if secondStyle then
+        frame:SetWidth(320)
+        local bgr, bgg, bgb = GetColor("colorBackground")
+        bg:SetVertexColor(bgr, bgg, bgb, 0.72)
+        frame.title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+        frame.title:SetWordWrap(false)
+        frame.title:ClearAllPoints()
+        frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -3)
+        collapseBtn:Hide()
+        forfeitBtn:Show()
+        pauseBtn:Show()
+        forfeitSmall:Hide()
+        pauseSmall:Hide()
+
+        frame.timer:Hide()
+        frame.plus2:Hide()
+        frame.plus3:Hide()
+        frame.pauseLabel:Hide()
+        frame.affixes:Hide()
+        frame.affixesLine2:Hide()
+        frame.timerBarContainer:Show()
+        frame.timerBar.text:SetFont("Fonts\\FRIZQT__.TTF", 13, "OUTLINE")
+        local tbr, tbg, tbb = GetColor("colorTimerBar")
+        tbFill:SetVertexColor(tbr, tbg, tbb, 0.95)
+        fbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
+        fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        ApplyForcesColor()
+        frame.forcesBar.text:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        frame.forcesBar.text:SetShadowOffset(1, -1)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, 1)
+        local timerR, timerG, timerB = GetColor("colorTimer")
+        frame.timerBar.text:SetTextColor(timerR, timerG, timerB)
+        frame.timerBarMark2:SetVertexColor(timerR, timerG, timerB, 1)
+        frame.timerBarMark3:SetVertexColor(timerR, timerG, timerB, 1)
+        frame.timerBarPlus2:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        frame.timerBarPlus3:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+
+        -- Top-right skull counter similar to reference layout
+        frame.deathsIcon:ClearAllPoints()
+        frame.deathsIcon:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -5)
+        frame.deathsIcon:SetSize(11, 11)
+        frame.deaths:ClearAllPoints()
+        local topCounterTextGap = -3
+        frame.deaths:SetPoint("RIGHT", frame.deathsIcon, "LEFT", topCounterTextGap, 0)
+        frame.deaths:SetText(RGBToHex(GetColor("colorDeaths")) .. tostring(deathCount or 0) .. "|r")
+        frame.deathsIcon:Show()
+        frame.deaths:Show()
+        frame.battleResIcon:ClearAllPoints()
+        frame.battleResIcon:SetPoint("RIGHT", frame.deaths, "LEFT", -10, 0)
+        frame.battleResIcon:SetSize(11, 11)
+        frame.battleRes:ClearAllPoints()
+        frame.battleRes:SetPoint("RIGHT", frame.battleResIcon, "LEFT", topCounterTextGap, 0)
+        frame.battleRes:Show()
+        frame.battleResIcon:Show()
+        local barInnerW = math.max(10, frame:GetWidth() - 18)
+        local barFillW = 0
+        if active and baseLimit and baseLimit > 0 then
+            barFillW = math.min(barInnerW - 2, math.max(1, math.floor((barInnerW - 2) * math.min(effElapsed, baseLimit) / baseLimit + 0.5)))
+        end
+        frame.timerBarFill:SetWidth(math.max(1, barFillW))
+        frame.timerBar.text:SetText(displayTimerText)
+
+        local function placeTimerMark(limit, markTex, labelFs)
+            if not (active and baseLimit and limit and limit > 0 and limit <= baseLimit) then
+                markTex:Hide()
+                labelFs:Hide()
+                return
+            end
+            if effElapsed and effElapsed >= limit then
+                markTex:Hide()
+                labelFs:Hide()
+                return
+            end
+            local x = math.floor((barInnerW - 2) * (limit / baseLimit) + 0.5)
+            markTex:ClearAllPoints()
+            markTex:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", 1 + x, -1)
+            markTex:Show()
+            labelFs:ClearAllPoints()
+            labelFs:SetPoint("RIGHT", markTex, "LEFT", -2, 0)
+            local rem = limit - effElapsed
+            labelFs:SetText(RGBToHex(GetColor("colorTimer")) .. FormatTime(math.abs(rem)) .. "|r")
+            labelFs:Show()
+        end
+        placeTimerMark(limit2, frame.timerBarMark2, frame.timerBarPlus2)
+        placeTimerMark(limit3, frame.timerBarMark3, frame.timerBarPlus3)
+    else
+        bg:SetVertexColor(0, 0, 0, 0)
+        frame:SetWidth(280)
+        local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
+        frame.title:SetFont(path, 13, "")
+        frame.timer:SetFont(path, 20, "")
+        fbBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+        ApplyForcesTexture()
+        frame.forcesBar.text:SetFont(path, 11, "")
+        frame.forcesBar.text:SetShadowOffset(0, 0)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, 0)
+        frame.title:SetWordWrap(true)
+        frame.title:ClearAllPoints()
+        frame.title:SetPoint("TOPLEFT",  frame, "TOPLEFT",  8, -6)
+        frame.title:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -6)
+        collapseBtn:Show()
+        frame.timer:Show()
+        frame.timerBarContainer:Hide()
+        frame.timerBarMark2:Hide()
+        frame.timerBarMark3:Hide()
+        frame.timerBarMark2:SetVertexColor(0, 0, 0, 1)
+        frame.timerBarMark3:SetVertexColor(0, 0, 0, 1)
+        frame.timerBarPlus2:Hide()
+        frame.timerBarPlus3:Hide()
+        frame.deathsIcon:SetSize(12, 12)
+        frame.deathsIcon:Show()
+        frame.deaths:Show()
+        frame.battleRes:Show()
+        frame.battleResIcon:Show()
+        if not collapsed then
+            forfeitBtn:Show()
+            pauseBtn:Show()
+            forfeitSmall:Hide()
+            pauseSmall:Hide()
+        end
     end
 
     -- В свёрнутом режиме показываем "12:10  +15  Данж" в заголовке (+ "Пауза" если пауза)
@@ -1387,7 +1738,7 @@ UpdateDisplay = function()
     local hexPlus23Exp = RGBToHex(GetColor("colorPlus23Expired"))
     local hexPlus23Rem = RGBToHex(GetColor("colorPlus23Remaining"))
     local showPlus2, showPlus3 = false, false
-    if active and state.elapsed and (limit2 or limit3) then
+    if (not secondStyle) and active and state.elapsed and (limit2 or limit3) then
         if limit2 then
             showPlus2 = true
             local rem2 = limit2 - effElapsed
@@ -1428,7 +1779,12 @@ UpdateDisplay = function()
         end
     end
 
-    local bossTopY = UpdateTimerLayout(showPlus2, showPlus3)
+    local bossTopY
+    if secondStyle then
+        bossTopY = UpdateTimerLayout(false, false)
+    else
+        bossTopY = UpdateTimerLayout(showPlus2, showPlus3)
+    end
     if state.bosses and #state.bosses > 0 then
         UpdateBossLayout(math.min(#state.bosses, MAX_BOSSES), bossTopY)
     else
@@ -1437,7 +1793,7 @@ UpdateDisplay = function()
 
     -- Прогресс (одно значение = %, 0-100)
     local forces = GetForces()
-    local useBar = MPT.db and MPT.db.forcesBar
+    local useBar = (MPT.db and MPT.db.forcesBar) or secondStyle
     local hexForcesPct = RGBToHex(GetColor("colorForcesPct"))
     local hexForcesPull = RGBToHex(GetColor("colorForcesPull"))
     local hexGrey = RGBToHex(GetColor("colorBossKilled"))
@@ -1468,8 +1824,10 @@ UpdateDisplay = function()
     -- Смерти (иконка черепа + число и штраф)
     local hexDeaths = RGBToHex(GetColor("colorDeaths"))
     local hexDeathsPenalty = RGBToHex(GetColor("colorDeathsPenalty"))
-    if deathCount > 0 then
-        local deathSign = useReverse and "+" or "-"
+    if secondStyle then
+        frame.deaths:SetText(hexDeaths .. tostring(deathCount or 0) .. "|r")
+    elseif deathCount > 0 then
+        local deathSign = (useReverse or secondStyle) and "+" or "-"
         frame.deaths:SetText(string.format(
             "%s%d|r %s(%s%dс)|r", hexDeaths, deathCount, hexDeathsPenalty, deathSign, deathLost))
     else
@@ -1480,6 +1838,17 @@ UpdateDisplay = function()
     local hexBattleRes = RGBToHex(GetColor("colorBattleRes"))
     local brCount = GetBattleResCount()
     frame.battleRes:SetText(hexBattleRes .. (brCount ~= nil and tostring(brCount) or "—") .. "|r")
+    if secondStyle then
+        frame.forcesBar.text:ClearAllPoints()
+        frame.forcesBar.text:SetPoint("LEFT", frame.forcesBarContainer, "LEFT", 4, 0)
+        frame.forcesBar.text:SetPoint("RIGHT", frame.forcesBarContainer, "RIGHT", -4, 0)
+        frame.forcesBar.text:SetJustifyH("LEFT")
+    else
+        frame.forcesBar.text:ClearAllPoints()
+        frame.forcesBar.text:SetPoint("LEFT",  fbTextFrame, "LEFT",  4, 0)
+        frame.forcesBar.text:SetPoint("RIGHT", fbTextFrame, "RIGHT", -4, 0)
+        frame.forcesBar.text:SetJustifyH("CENTER")
+    end
     NotifyDisplayChanged()
 end
 
@@ -1676,9 +2045,17 @@ end
 
 function MPT:LoadTimerPosition()
     frame:ClearAllPoints()
-    local scale = (self.db and self.db.scale) or 1.0
+    local scale = GetStyleOption("scale", 1.0)
     frame:SetScale(scale)
-    local pos = self.charDb and self.charDb.timerPos
+    local pos
+    if self.charDb then
+        local sid = GetCurrentStyleId()
+        if type(self.charDb.timerPosByStyle) == "table" and type(self.charDb.timerPosByStyle[sid]) == "table" then
+            pos = self.charDb.timerPosByStyle[sid]
+        else
+            pos = self.charDb.timerPos
+        end
+    end
     if pos and pos.x then
         frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", pos.x, pos.y)
     else
@@ -1696,8 +2073,13 @@ lastDisplayedAffixIDs = nil
 -- affixIDs: таблица id аффиксов или nil.
 function MPT:RefreshAffixes(affixIDs)
     lastDisplayedAffixIDs = affixIDs
-    local useText  = self.db and self.db.affixText
-    local useIcons = self.db and self.db.affixIcons
+    local secondStyle = IsSecondStyle()
+    local useText  = GetStyleOption("affixText", true)
+    local useIcons = GetStyleOption("affixIcons", false)
+    if secondStyle then
+        useText = false
+        useIcons = true
+    end
 
     -- Сброс
     frame.affixes:SetText("")
@@ -1728,13 +2110,17 @@ function MPT:RefreshAffixes(affixIDs)
 
     -- Блок иконок (скруглённые Frame+Texture)
     if useIcons then
+        local iconSize = secondStyle and 12 or AFFIX_ICON_SIZE
+        local iconGap = secondStyle and 3 or AFFIX_ICON_GAP
         -- Скрываем все иконки из пула
         for i = 1, MAX_AFFIX_ICONS do
             frame.affixIconFrames[i]:Hide()
         end
         -- Якорь контейнера: под последней видимой текстовой строкой
         frame.affixesIcons:ClearAllPoints()
-        if frame.affixesLine2:IsShown() then
+        if secondStyle then
+            frame.affixesIcons:SetPoint("LEFT", frame.title, "RIGHT", 3, 0)
+        elseif frame.affixesLine2:IsShown() then
             frame.affixesIcons:SetPoint("TOPLEFT", frame.affixesLine2, "BOTTOMLEFT",  0, -8)
         elseif frame.affixes:IsShown() then
             frame.affixesIcons:SetPoint("TOPLEFT", frame.affixes,      "BOTTOMLEFT",  0, -8)
@@ -1743,18 +2129,22 @@ function MPT:RefreshAffixes(affixIDs)
         end
         -- Расставляем иконки горизонтально
         local count = math.min(#affixIDs, MAX_AFFIX_ICONS)
-        local totalW = count * AFFIX_ICON_SIZE + math.max(0, count - 1) * AFFIX_ICON_GAP
+        local totalW = count * iconSize + math.max(0, count - 1) * iconGap
         frame.affixesIcons:SetWidth(math.max(totalW, 1))
-        frame.affixesIcons:SetHeight(AFFIX_ICON_SIZE)
+        frame.affixesIcons:SetHeight(iconSize)
         for i = 1, count do
             local id = affixIDs[i]
             local _, _, icon = GetAffixInfoSafe(id)
             local iconFrame = frame.affixIconFrames[i]
             iconFrame:ClearAllPoints()
+            iconFrame:SetSize(iconSize, iconSize)
+            if iconFrame.border then
+                iconFrame.border:SetShown(not secondStyle)
+            end
             if i == 1 then
                 iconFrame:SetPoint("TOPLEFT", frame.affixesIcons, "TOPLEFT", 0, 0)
             else
-                iconFrame:SetPoint("TOPLEFT", frame.affixIconFrames[i-1], "TOPRIGHT", AFFIX_ICON_GAP, 0)
+                iconFrame:SetPoint("TOPLEFT", frame.affixIconFrames[i-1], "TOPRIGHT", iconGap, 0)
             end
             if type(icon) == "number" and icon > 0 then
                 -- Sirus может возвращать числовой fileDataID
@@ -1811,7 +2201,7 @@ function MPT:RefreshCurrentAffixes()
 end
 
 function MPT:RefreshForcesMode()
-    SetForcesMode(self.db and self.db.forcesBar or false)
+    SetForcesMode((self.db and self.db.forcesBar or false) or IsSecondStyle())
     if frame and frame:IsShown() then
         -- В режиме превью нужна полная перерисовка (UpdateTimerLayout(true,true) + UpdateBossLayout),
         -- иначе только UpdateDisplay() даёт неверный layout и бар «уезжает» вверх.
@@ -1869,7 +2259,7 @@ function MPT:StartTimer()
     -- Заголовок: "+15 — Кузня Крови"
     local lvlStr = state.level and ("+" .. state.level) or "?"
     local name   = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
-    lastTitleText = string.format("%s%s \226\128\148 %s|r", RGBToHex(GetColor("colorTitle")), lvlStr, name)
+    lastTitleText = string.format("%s%s %s|r", RGBToHex(GetColor("colorTitle")), lvlStr, name)
     frame.title:SetText(lastTitleText)
 
     -- Аффиксы
@@ -1889,6 +2279,8 @@ function MPT:StartTimer()
             for i = 1, MAX_BOSSES do
                 frame.bossLines[i]:SetText("")
                 frame.bossLines[i]:Hide()
+                frame.bossRightLines[i]:SetText("")
+                frame.bossRightLines[i]:Hide()
             end
         end
     end
@@ -1950,8 +2342,57 @@ end
 function MPT:ShowPreview()
     if collapsed then SetCollapsed(false) end
     self:LoadTimerPosition()
+    local secondStyle = IsSecondStyle()
 
-    lastTitleText = string.format("%s+15 \226\128\148 Кузня Крови|r", RGBToHex(GetColor("colorTitle")))
+    if secondStyle then
+        frame:SetWidth(320)
+        local bgr, bgg, bgb = GetColor("colorBackground")
+        bg:SetVertexColor(bgr, bgg, bgb, 0.72)
+        frame.title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+        frame.title:SetWordWrap(false)
+        frame.title:ClearAllPoints()
+        frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -3)
+        collapseBtn:Hide()
+        forfeitBtn:Show()
+        pauseBtn:Show()
+        forfeitSmall:Hide()
+        pauseSmall:Hide()
+        frame.timer:Hide()
+        frame.plus2:Hide()
+        frame.plus3:Hide()
+        frame.pauseLabel:Hide()
+        frame.battleRes:Hide()
+        frame.battleResIcon:ClearAllPoints()
+        frame.battleResIcon:SetPoint("RIGHT", frame.deaths, "LEFT", -10, 0)
+        frame.battleResIcon:SetSize(11, 11)
+        frame.battleRes:ClearAllPoints()
+        local topCounterTextGap = -3
+        frame.battleRes:SetPoint("RIGHT", frame.battleResIcon, "LEFT", topCounterTextGap, 0)
+        frame.battleRes:Show()
+        frame.battleResIcon:Show()
+        frame.deathsIcon:SetSize(11, 11)
+        frame.deathsIcon:ClearAllPoints()
+        frame.deathsIcon:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -5)
+        frame.deaths:ClearAllPoints()
+        frame.deaths:SetPoint("RIGHT", frame.deathsIcon, "LEFT", topCounterTextGap, 0)
+    else
+        bg:SetVertexColor(0, 0, 0, 0)
+        local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
+        frame.title:SetFont(path, 13, "")
+        frame.title:SetWordWrap(true)
+        frame.title:ClearAllPoints()
+        frame.title:SetPoint("TOPLEFT",  frame, "TOPLEFT",  8, -6)
+        frame.title:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -6)
+        collapseBtn:Show()
+        forfeitBtn:Show()
+        pauseBtn:Show()
+        forfeitSmall:Hide()
+        pauseSmall:Hide()
+        frame.battleRes:Show()
+        frame.battleResIcon:Show()
+    end
+
+    lastTitleText = string.format("%s+15 Кузня Крови|r", RGBToHex(GetColor("colorTitle")))
     frame.title:SetText(lastTitleText)
     -- Аффиксы превью: 4 иконки с разными способами скругления для теста
     local previewAffixIDs = { 10, 2, 12, 3 }
@@ -1960,11 +2401,54 @@ function MPT:ShowPreview()
     frame.timer:SetTextColor(tr, tg, tb)
     local hexP23 = RGBToHex(GetColor("colorPlus23"))
     local hexP23Rem = RGBToHex(GetColor("colorPlus23Remaining"))
-    if MPT.db and MPT.db.reverseTimer then
+    if secondStyle then
+        frame.timer:SetText("12:44/35:00")
+        frame.timerBarContainer:Show()
+        frame.timerBar.text:SetFont("Fonts\\FRIZQT__.TTF", 13, "OUTLINE")
+        frame.timerBar.text:SetTextColor(tr, tg, tb)
+        local tbr, tbg, tbb = GetColor("colorTimerBar")
+        tbFill:SetVertexColor(tbr, tbg, tbb, 0.95)
+        fbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
+        fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        ApplyForcesColor()
+        frame.forcesBar.text:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        frame.forcesBar.text:SetShadowOffset(1, -1)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, 1)
+        frame.timerBarMark2:SetVertexColor(tr, tg, tb, 1)
+        frame.timerBarMark3:SetVertexColor(tr, tg, tb, 1)
+        frame.timerBarPlus2:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        frame.timerBarPlus3:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        frame.timerBar.text:SetText("12:44/35:00")
+        frame.timerBarFill:SetWidth(math.floor((frame:GetWidth() - 18) * 0.36))
+        frame.timerBarMark2:Show()
+        frame.timerBarMark2:ClearAllPoints()
+        frame.timerBarMark2:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", math.floor((frame:GetWidth() - 18) * 0.80), -1)
+        frame.timerBarPlus2:Show()
+        frame.timerBarPlus2:SetText(RGBToHex(GetColor("colorTimer")) .. "15:16|r")
+        frame.timerBarPlus2:ClearAllPoints()
+        frame.timerBarPlus2:SetPoint("RIGHT", frame.timerBarMark2, "LEFT", -2, 0)
+        frame.timerBarMark3:Show()
+        frame.timerBarMark3:ClearAllPoints()
+        frame.timerBarMark3:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", math.floor((frame:GetWidth() - 18) * 0.64), -1)
+        frame.timerBarPlus3:Show()
+        frame.timerBarPlus3:SetText(RGBToHex(GetColor("colorTimer")) .. "9:40|r")
+        frame.timerBarPlus3:ClearAllPoints()
+        frame.timerBarPlus3:SetPoint("RIGHT", frame.timerBarMark3, "LEFT", -2, 0)
+        frame.plus2:Hide()
+        frame.plus3:Hide()
+    elseif MPT.db and MPT.db.reverseTimer then
+        frame.timerBarContainer:Hide()
         frame.timer:SetText("12:44/35:00")
         frame.plus2:SetText(string.format("%s+2 (28:00) %s15:16|r", hexP23, hexP23Rem))
         frame.plus3:SetText(string.format("%s+3 (22:24) %s9:40|r", hexP23, hexP23Rem))
     else
+        frame.timerBarContainer:Hide()
+        fbBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+        ApplyForcesTexture()
+        local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
+        frame.forcesBar.text:SetFont(path, 11, "")
+        frame.forcesBar.text:SetShadowOffset(0, 0)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, 0)
         frame.timer:SetText("22:16")
         frame.plus2:SetText(string.format("%s+2 (7:00) %s15:16|r", hexP23, hexP23Rem))
         frame.plus3:SetText(string.format("%s+3 (12:36) %s9:40|r", hexP23, hexP23Rem))
@@ -1983,34 +2467,60 @@ function MPT:ShowPreview()
     for j, bossName in ipairs(previewBossList) do
         if j == 1 then
             -- Время убийства от старта ключа; рекорд 4:01, текущий 3:41 = -0:20
-            if showRecord then
+            if secondStyle then
+                if showRecord then
+                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s-0:20  3:41|r", hexBossKilled) }
+                else
+                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s3:41|r", hexBossKilled) }
+                end
+            elseif showRecord then
                 previewTexts[j] = string.format("%s[+] %s  3:41 (Рекорд 4:01, -0:20)|r", hexBossKilled, bossName)
             else
                 previewTexts[j] = string.format("%s[+] %s  3:41|r", hexBossKilled, bossName)
             end
         elseif j == 2 then
-            if showRecord then
+            if secondStyle then
+                if showRecord then
+                    local hexBad = RGBToHex(GetColor("colorTimerFailed"))
+                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s+0:07  7:22|r", hexBad) }
+                else
+                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s7:22|r", hexBossKilled) }
+                end
+            elseif showRecord then
                 previewTexts[j] = string.format("%s[+] %s  7:22 (Рекорд 7:15, +0:07)|r", hexBossKilled, bossName)
             else
                 previewTexts[j] = string.format("%s[+] %s  7:22|r", hexBossKilled, bossName)
             end
         else
-            previewTexts[j] = string.format("%s[ ] %s  \226\128\148|r", hexBossPending, bossName)
+            if secondStyle then
+                previewTexts[j] = { left = string.format("%s%s|r", hexBossPending, bossName), right = "" }
+            else
+                previewTexts[j] = string.format("%s[ ] %s|r", hexBossPending, bossName)
+            end
         end
     end
     local previewCount = math.min(#previewTexts, MAX_BOSSES)
     for i = 1, previewCount do
         local fs = frame.bossLines[i]
-        fs:SetText(previewTexts[i])
+        if secondStyle then
+            fs:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+            fs:SetText(previewTexts[i].left)
+            frame.bossRightLines[i]:SetText(previewTexts[i].right)
+            frame.bossRightLines[i]:Show()
+        else
+            fs:SetText(previewTexts[i])
+            frame.bossRightLines[i]:Hide()
+        end
         local h = fs:GetStringHeight() or 0
         frame.bossLineH[i] = (h > BOSS_LINE_H1 + 2) and BOSS_LINE_H2 or BOSS_LINE_H1
         fs:Show()
     end
     for i = previewCount + 1, MAX_BOSSES do
         frame.bossLines[i]:Hide()
+        frame.bossRightLines[i]:Hide()
     end
-    local previewBossTopY = UpdateTimerLayout(true, true)
-    local useForcesBar = MPT.db and MPT.db.forcesBar
+    local previewBossTopY = secondStyle and 0 or UpdateTimerLayout(true, true)
+    local useForcesBar = secondStyle or (MPT.db and MPT.db.forcesBar)
     SetForcesMode(useForcesBar)
     UpdateBossLayout(previewCount, previewBossTopY)
 
@@ -2023,17 +2533,30 @@ function MPT:ShowPreview()
     if useForcesBar then
         frame.forcesBar:SetValue(70)
         frame.forcesBar.text:SetText(forcesPreviewText)
+        if secondStyle then
+            frame.forcesBar.text:ClearAllPoints()
+            frame.forcesBar.text:SetPoint("LEFT", frame.forcesBarContainer, "LEFT", 4, 0)
+            frame.forcesBar.text:SetPoint("RIGHT", frame.forcesBarContainer, "RIGHT", -4, 0)
+            frame.forcesBar.text:SetJustifyH("LEFT")
+        end
     else
         local textPreview = showPullPct and string.format("%sУбито врагов: |r%s70.0%%|r %s+5.40%% (7)|r", hexFPct, hexFPct, hexFPull) or string.format("%sУбито врагов: |r%s70.0%%|r", hexFPct, hexFPct)
         frame.forces:SetText(textPreview)
     end
-    if MPT.db and MPT.db.reverseTimer then
+    if secondStyle then
+        frame.deaths:SetText(string.format("%s2|r", hexD))
+    elseif MPT.db and MPT.db.reverseTimer then
         frame.deaths:SetText(string.format("%s2|r %s(+10с)|r", hexD, hexDPen))
     else
         frame.deaths:SetText(string.format("%s2|r %s(-10с)|r", hexD, hexDPen))
     end
-    local hexBR = RGBToHex(GetColor("colorBattleRes"))
-    frame.battleRes:SetText(hexBR .. "1|r")
+    if secondStyle then
+        local hexBR = RGBToHex(GetColor("colorBattleRes"))
+        frame.battleRes:SetText(hexBR .. "1|r")
+    else
+        local hexBR = RGBToHex(GetColor("colorBattleRes"))
+        frame.battleRes:SetText(hexBR .. "1|r")
+    end
 
     frame:Show()
 end
@@ -2094,18 +2617,27 @@ end
 
 UpdateBossDisplay = function()
     if not state.bosses or #state.bosses == 0 then return end
+    local secondStyle = IsSecondStyle()
     local hexKilled = RGBToHex(GetColor("colorBossKilled"))
     local hexPending = RGBToHex(GetColor("colorBossPending"))
+    local hexFailed = RGBToHex(GetColor("colorTimerFailed"))
     local count = math.min(#state.bosses, MAX_BOSSES)
     for i = 1, count do
         frame.bossLines[i]:Show()
+        if secondStyle then
+            frame.bossRightLines[i]:Show()
+        else
+            frame.bossRightLines[i]:Hide()
+        end
     end
     for i = count + 1, MAX_BOSSES do
         frame.bossLines[i]:Hide()
+        frame.bossRightLines[i]:Hide()
     end
     for i = 1, count do
         local boss = state.bosses[i]
         local line
+        local rightText = ""
         if boss.killed then
             local kt = boss.killTime
             if kt then
@@ -2116,20 +2648,60 @@ UpdateBossDisplay = function()
                     showRecord = not not MPT.db.showBossRecord
                 end
                 if rec and rec.kt and showRecord then
-                    local delta = FormatDelta(kt, rec.kt)
-                    line = string.format("%s[+] %s  %s (Рекорд %s, %s)|r",
-                        hexKilled, boss.name, ktStr, FormatTime(rec.kt), delta)
+                    if secondStyle then
+                        local delta = FormatDelta(kt, rec.kt)
+                        local isSlower = (kt - rec.kt) > 0
+                        local rightColor = isSlower and hexFailed or hexKilled
+                        line = string.format("%s%s|r", hexKilled, boss.name)
+                        rightText = string.format("%s%s|r %s%s|r", rightColor, delta, rightColor, ktStr)
+                    else
+                        local delta = FormatDelta(kt, rec.kt)
+                        line = string.format("%s[+] %s  %s (Рекорд %s, %s)|r",
+                            hexKilled, boss.name, ktStr, FormatTime(rec.kt), delta)
+                    end
                 else
-                    line = string.format("%s[+] %s  %s|r", hexKilled, boss.name, ktStr)
+                    if secondStyle then
+                        line = string.format("%s%s|r", hexKilled, boss.name)
+                        -- showBossRecord=false: keep only kill time, always green
+                        rightText = string.format("%s%s|r", hexKilled, ktStr)
+                    else
+                        line = string.format("%s[+] %s  %s|r", hexKilled, boss.name, ktStr)
+                    end
                 end
             else
-                line = string.format("%s[+] %s|r", hexKilled, boss.name)
+                if secondStyle then
+                    line = string.format("%s%s|r", hexKilled, boss.name)
+                    rightText = hexKilled .. "—|r"
+                else
+                    line = string.format("%s[+] %s|r", hexKilled, boss.name)
+                end
             end
         else
-            line = string.format("%s[ ] %s  \226\128\148|r", hexPending, boss.name)
+            if secondStyle then
+                line = string.format("%s%s|r", hexPending, boss.name)
+                local showRecord = true
+                if MPT.db and MPT.db.showBossRecord ~= nil then
+                    showRecord = not not MPT.db.showBossRecord
+                end
+                local rec = GetBossRecord(boss.name)
+                if showRecord and rec and rec.kt then
+                    rightText = hexPending .. FormatTime(rec.kt) .. "|r"
+                else
+                    rightText = ""
+                end
+            else
+                line = string.format("%s[ ] %s|r", hexPending, boss.name)
+            end
         end
         local fs = frame.bossLines[i]
+        if secondStyle then
+            fs:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+        end
         fs:SetText(line)
+        if secondStyle then
+            frame.bossRightLines[i]:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+            frame.bossRightLines[i]:SetText(rightText)
+        end
         local h = fs:GetStringHeight() or 0
         frame.bossLineH[i] = (h > BOSS_LINE_H1 + 2) and BOSS_LINE_H2 or BOSS_LINE_H1
     end

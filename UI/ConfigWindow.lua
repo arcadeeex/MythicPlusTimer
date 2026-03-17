@@ -15,6 +15,14 @@ local fontDD
 local scaleSlider
 local scaleValue
 local previewToggleBtn
+local affixTextCheck
+local affixIconsCheck
+local reverseTimerAppearanceCheck
+local forcesBarAppearanceCheck
+local appearanceHint
+local textureLabelRef
+local fontLabelRef
+local scaleHeaderRef
 
 local generalChecks = {}
 local colorRows = {}
@@ -309,6 +317,26 @@ local function UpdatePreviewButtonText()
     end
 end
 
+local function GetStyleOption(key, fallback)
+    if MPT.GetStyleOption then
+        return MPT:GetStyleOption(key, fallback)
+    end
+    if MPT.db and MPT.db[key] ~= nil then
+        return MPT.db[key]
+    end
+    return fallback
+end
+
+local function SetStyleOption(key, value)
+    if MPT.SetStyleOption then
+        MPT:SetStyleOption(key, value)
+        return
+    end
+    if MPT.db then
+        MPT.db[key] = value
+    end
+end
+
 local function ShowSection(id)
     for _, dd in ipairs(dropdowns) do
         if dd and dd.popup and dd.popup:IsShown() then
@@ -339,7 +367,7 @@ local function ShowSection(id)
     end
 end
 
-local function CreateCheck(parent, label, key, y, onApply)
+local function CreateCheck(parent, label, key, y, onApply, styleSpecific)
     local cb = CreateFrame("CheckButton", nil, parent)
     cb:SetPoint("TOPLEFT", parent, "TOPLEFT", 10, y)
     cb:SetSize(22, 22)
@@ -368,11 +396,14 @@ local function CreateCheck(parent, label, key, y, onApply)
         self.mark:SetShown(self:GetChecked() and true or false)
     end)
     cb:SetScript("OnClick", function(self)
-        if not MPT.db then return end
         local v = (self:GetChecked() == 1 or self:GetChecked() == true)
         self.mark:SetShown(v)
-        MPT.db[key] = v
-        if onApply then onApply(MPT.db[key]) end
+        if styleSpecific then
+            SetStyleOption(key, v)
+        elseif MPT.db then
+            MPT.db[key] = v
+        end
+        if onApply then onApply(v) end
     end)
     return cb
 end
@@ -392,24 +423,30 @@ local function BuildAppearanceSection()
     header:SetText("Стиль и отображение")
     header:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
 
-    local styleLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    styleLabel:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -12)
-    styleLabel:SetText("Стиль")
-    styleLabel:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
-
-    styleDD = CreateMPTDropDown(frame, 300, 8, {}, function(item)
-        MPT:ApplyStyle(item.value)
-        MPT:RefreshConfigWindow()
+    reverseTimerAppearanceCheck = CreateCheck(frame, "Обратный таймер", "reverseTimer", -34, function()
+        if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then MPT:ShowPreview() end
     end)
-    styleDD.button:SetPoint("TOPLEFT", styleLabel, "BOTTOMLEFT", 0, -4)
+    forcesBarAppearanceCheck = CreateCheck(frame, "Показывать процент прогресс баром", "forcesBar", -74, function()
+        if MPT.RefreshForcesMode then MPT:RefreshForcesMode() end
+    end)
+
+    affixTextCheck = CreateCheck(frame, "Показывать аффиксы текстом", "affixText", -114, function(v)
+        SetStyleOption("affixText", v)
+        if MPT.RefreshCurrentAffixes then MPT:RefreshCurrentAffixes() end
+    end, true)
+    affixIconsCheck = CreateCheck(frame, "Показывать аффиксы иконками", "affixIcons", -154, function(v)
+        SetStyleOption("affixIcons", v)
+        if MPT.RefreshCurrentAffixes then MPT:RefreshCurrentAffixes() end
+    end, true)
 
     local textureLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    textureLabel:SetPoint("TOPLEFT", styleDD.button, "BOTTOMLEFT", 0, -12)
+    textureLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -194)
     textureLabel:SetText("Текстура")
     textureLabel:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+    textureLabelRef = textureLabel
 
     textureDD = CreateMPTDropDown(frame, 300, 10, {}, function(item)
-        if MPT.db then MPT.db.forcesTexture = item.value end
+        SetStyleOption("forcesTexture", item.value)
         if MPT.RefreshForcesTexture then MPT:RefreshForcesTexture() end
     end, function(row, item)
         if not row._texBar then
@@ -436,9 +473,10 @@ local function BuildAppearanceSection()
     fontLabel:SetPoint("TOPLEFT", textureDD.button, "BOTTOMLEFT", 0, -12)
     fontLabel:SetText("Шрифт")
     fontLabel:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+    fontLabelRef = fontLabel
 
     fontDD = CreateMPTDropDown(frame, 300, 12, {}, function(item)
-        if MPT.db then MPT.db.font = item.value end
+        SetStyleOption("font", item.value)
         if MPT.RefreshFont then MPT:RefreshFont() end
     end, function(row, item)
         row.lbl:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
@@ -452,6 +490,7 @@ local function BuildAppearanceSection()
     scaleHeader:SetPoint("TOPLEFT", fontDD.button, "BOTTOMLEFT", 0, -16)
     scaleHeader:SetText("Масштаб таймера")
     scaleHeader:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+    scaleHeaderRef = scaleHeader
 
     scaleSlider = CreateFrame("Slider", nil, frame)
     scaleSlider:SetPoint("TOPLEFT", scaleHeader, "BOTTOMLEFT", 0, -8)
@@ -468,9 +507,8 @@ local function BuildAppearanceSection()
         insets = { left = 3, right = 3, top = 6, bottom = 6 },
     })
     scaleSlider:SetScript("OnValueChanged", function(_, value)
-        if not MPT.db then return end
         value = math.floor(value * 10 + 0.5) / 10
-        MPT.db.scale = value
+        SetStyleOption("scale", value)
         if scaleValue then scaleValue:SetText(string.format("%.1f", value)) end
         local timerFrame = _G["MPTTimerFrame"]
         if timerFrame then timerFrame:SetScale(value) end
@@ -478,20 +516,13 @@ local function BuildAppearanceSection()
 
     scaleValue = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     scaleValue:SetPoint("LEFT", scaleSlider, "RIGHT", 10, 0)
+    appearanceHint = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    appearanceHint:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -194)
+    appearanceHint:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
+    appearanceHint:SetText("Для этого стиля дополнительные настройки пока не добавлены.")
+    appearanceHint:Hide()
 
-    previewToggleBtn = CreateStyledButton(frame, 180, 24, "Показать превью")
-    previewToggleBtn:SetPoint("TOPLEFT", scaleSlider, "BOTTOMLEFT", 0, -14)
-    previewToggleBtn:SetScript("OnClick", function()
-        local timerFrame = _G["MPTTimerFrame"]
-        if timerFrame and timerFrame:IsShown() then
-            timerFrame:Hide()
-        else
-            if MPT.ShowPreview then MPT:ShowPreview() end
-        end
-        UpdatePreviewButtonText()
-    end)
-
-    frame.contentHeight = 330
+    frame.contentHeight = 430
     frame:SetHeight(frame.contentHeight)
 end
 
@@ -513,24 +544,12 @@ local function BuildGeneralSection()
             if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then MPT:ShowPreview() end
         end },
         { label = "Вставлять ключ автоматически", key = "autoKeystone" },
-        { label = "Обратный таймер", key = "reverseTimer", onApply = function()
-            if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then MPT:ShowPreview() end
-        end },
         { label = "Скрывать стандартный интерфейс", key = "hideDefaultTracker", onApply = function()
             if MPT.ApplyDefaultTrackerVisibility then MPT:ApplyDefaultTrackerVisibility() end
-        end },
-        { label = "Показывать прогресс баром", key = "forcesBar", onApply = function()
-            if MPT.RefreshForcesMode then MPT:RefreshForcesMode() end
         end },
         { label = "Показывать % в тултипе NPC", key = "showForcesInTooltip" },
         { label = "Показывать % за спуленный пак", key = "showForcesPullPct", onApply = function()
             if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then MPT:ShowPreview() end
-        end },
-        { label = "Показывать аффиксы текстом", key = "affixText", onApply = function()
-            if MPT.RefreshCurrentAffixes then MPT:RefreshCurrentAffixes() end
-        end },
-        { label = "Показывать аффиксы иконками", key = "affixIcons", onApply = function()
-            if MPT.RefreshCurrentAffixes then MPT:RefreshCurrentAffixes() end
         end },
     }
 
@@ -663,7 +682,7 @@ local function RefreshSections()
             texItems[#texItems + 1] = { name = t.name, value = t.name, path = t.path }
         end
         textureDD.setItems(texItems)
-        textureDD.setValue((MPT.db and MPT.db.forcesTexture) or "Blank")
+        textureDD.setValue(GetStyleOption("forcesTexture", "Blank"))
     end
     if fontDD then
         local fontItems = {}
@@ -671,12 +690,96 @@ local function RefreshSections()
             fontItems[#fontItems + 1] = { name = f.name, value = f.name, path = f.path }
         end
         fontDD.setItems(fontItems)
-        fontDD.setValue((MPT.db and MPT.db.font) or "Friz Quadrata (default)")
+        fontDD.setValue(GetStyleOption("font", "Friz Quadrata (default)"))
     end
     if scaleSlider and scaleValue then
-        local scale = (MPT.db and MPT.db.scale) or 1.0
+        local scale = GetStyleOption("scale", 1.0)
         scaleSlider:SetValue(scale)
         scaleValue:SetText(string.format("%.1f", scale))
+    end
+    local schema = MPT.GetActiveStyleOptionsSchema and MPT:GetActiveStyleOptionsSchema() or {}
+    local activeStyleId = (MPT.GetActiveStyleId and MPT:GetActiveStyleId()) or (MPT.db and MPT.db.activeStyle) or "default"
+    local showDefaultOnly = (activeStyleId == "default")
+    local has = {}
+    for _, opt in ipairs(schema) do
+        has[opt.key] = true
+    end
+    local hasAny = next(has) ~= nil
+    if textureDD and textureDD.button then textureDD.button:SetShown(has.forcesTexture == true) end
+    if textureLabelRef then textureLabelRef:SetShown(has.forcesTexture == true) end
+    if fontDD and fontDD.button then fontDD.button:SetShown(has.font == true) end
+    if fontLabelRef then fontLabelRef:SetShown(has.font == true) end
+    if scaleSlider then scaleSlider:SetShown(has.scale == true) end
+    if scaleValue then scaleValue:SetShown(has.scale == true) end
+    if scaleHeaderRef then scaleHeaderRef:SetShown(has.scale == true) end
+    if reverseTimerAppearanceCheck then reverseTimerAppearanceCheck:SetShown(showDefaultOnly) end
+    if forcesBarAppearanceCheck then forcesBarAppearanceCheck:SetShown(showDefaultOnly) end
+    if affixTextCheck then affixTextCheck:SetShown(has.affixText == true) end
+    if affixIconsCheck then affixIconsCheck:SetShown(has.affixIcons == true) end
+    if appearanceHint then appearanceHint:SetShown((not hasAny) and (not showDefaultOnly)) end
+
+    -- Reflow appearance controls so visible items always start at top.
+    local ap = sectionFrames.appearance
+    if ap then
+        local y = -34
+        local function placeCheck(cb)
+            if cb and cb:IsShown() then
+                cb:ClearAllPoints()
+                cb:SetPoint("TOPLEFT", ap, "TOPLEFT", 10, y)
+                y = y - 40
+            end
+        end
+        placeCheck(reverseTimerAppearanceCheck)
+        placeCheck(forcesBarAppearanceCheck)
+        placeCheck(affixTextCheck)
+        placeCheck(affixIconsCheck)
+
+        local function placeDropdown(label, dd)
+            if label and dd and dd.button and label:IsShown() and dd.button:IsShown() then
+                label:ClearAllPoints()
+                label:SetPoint("TOPLEFT", ap, "TOPLEFT", 10, y)
+                dd.button:ClearAllPoints()
+                dd.button:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -4)
+                y = y - 56
+            end
+        end
+        placeDropdown(textureLabelRef, textureDD)
+        placeDropdown(fontLabelRef, fontDD)
+
+        if scaleHeaderRef and scaleSlider and scaleHeaderRef:IsShown() and scaleSlider:IsShown() then
+            scaleHeaderRef:ClearAllPoints()
+            scaleHeaderRef:SetPoint("TOPLEFT", ap, "TOPLEFT", 10, y)
+            scaleSlider:ClearAllPoints()
+            scaleSlider:SetPoint("TOPLEFT", scaleHeaderRef, "BOTTOMLEFT", 0, -8)
+            if scaleValue then
+                scaleValue:ClearAllPoints()
+                scaleValue:SetPoint("LEFT", scaleSlider, "RIGHT", 10, 0)
+            end
+            y = y - 60
+        end
+
+        if appearanceHint and appearanceHint:IsShown() then
+            appearanceHint:ClearAllPoints()
+            appearanceHint:SetPoint("TOPLEFT", ap, "TOPLEFT", 10, y)
+            y = y - 30
+        end
+
+        ap.contentHeight = math.max(340, -y + 40)
+        ap:SetHeight(ap.contentHeight)
+        if activeSection == "appearance" then
+            UpdateContentHeight(ap.contentHeight)
+        end
+    end
+
+    if affixTextCheck and has.affixText then
+        local v = GetStyleOption("affixText", true)
+        affixTextCheck:SetChecked(v)
+        if affixTextCheck.mark then affixTextCheck.mark:SetShown(v and true or false) end
+    end
+    if affixIconsCheck and has.affixIcons then
+        local v = GetStyleOption("affixIcons", false)
+        affixIconsCheck:SetChecked(v)
+        if affixIconsCheck.mark then affixIconsCheck.mark:SetShown(v and true or false) end
     end
     UpdatePreviewButtonText()
 
@@ -687,6 +790,16 @@ local function RefreshSections()
             cb:SetChecked(v)
             if cb.mark then cb.mark:SetShown(v and true or false) end
         end
+    end
+    if reverseTimerAppearanceCheck then
+        local v = MPT.db and MPT.db.reverseTimer or false
+        reverseTimerAppearanceCheck:SetChecked(v)
+        if reverseTimerAppearanceCheck.mark then reverseTimerAppearanceCheck.mark:SetShown(v and true or false) end
+    end
+    if forcesBarAppearanceCheck then
+        local v = MPT.db and MPT.db.forcesBar or false
+        forcesBarAppearanceCheck:SetChecked(v)
+        if forcesBarAppearanceCheck.mark then forcesBarAppearanceCheck.mark:SetShown(v and true or false) end
     end
 
     -- Colors
@@ -724,6 +837,29 @@ local function CreateWindow()
     title:SetPoint("TOPLEFT", cfg, "TOPLEFT", 16, -16)
     title:SetText("Mythic Plus Timer")
     title:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+
+    local styleTopLabel = cfg:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    styleTopLabel:SetPoint("TOPLEFT", cfg, "TOPLEFT", 214, -18)
+    styleTopLabel:SetText("Стиль")
+    styleTopLabel:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+
+    styleDD = CreateMPTDropDown(cfg, 170, 8, {}, function(item)
+        MPT:ApplyStyle(item.value)
+        MPT:RefreshConfigWindow()
+    end)
+    styleDD.button:SetPoint("LEFT", styleTopLabel, "RIGHT", 8, 0)
+
+    previewToggleBtn = CreateStyledButton(cfg, 150, 22, "Показать превью")
+    previewToggleBtn:SetPoint("LEFT", styleDD.button, "RIGHT", 8, 0)
+    previewToggleBtn:SetScript("OnClick", function()
+        local timerFrame = _G["MPTTimerFrame"]
+        if timerFrame and timerFrame:IsShown() then
+            timerFrame:Hide()
+        else
+            if MPT.ShowPreview then MPT:ShowPreview() end
+        end
+        UpdatePreviewButtonText()
+    end)
 
     local close = CreateFrame("Button", nil, cfg, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", cfg, "TOPRIGHT", -6, -6)

@@ -1,7 +1,7 @@
 ## Interface: 30300
 ## Title: MythicPlus Timer
 ## Notes: Timer and tracker for Mythic+ dungeons on Sirus
-## Author:
+## Author: Arcade
 ## Version: 0.1.0
 ## SavedVariables: MythicPlusTimerDB
 ## SavedVariablesPerCharacter: MythicPlusTimerCharDB
@@ -12,6 +12,7 @@ Core.lua
 # Style system and settings window
 UI\StyleRegistry.lua
 UI\Styles\Default.lua
+UI\Styles\Second.lua
 
 # Static NPC forces database
 Data\NpcDatabase.lua

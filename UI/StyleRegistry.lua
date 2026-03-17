@@ -11,6 +11,15 @@ local function cloneColor(c)
     return { r = c.r, g = c.g, b = c.b }
 end
 
+local function cloneValue(v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    for k, vv in pairs(v) do
+        out[k] = cloneValue(vv)
+    end
+    return out
+end
+
 local function getStyleStore(styleId, create)
     if not MPT.db then return nil end
     if type(MPT.db.styles) ~= "table" then
@@ -29,6 +38,24 @@ local function getStyleStore(styleId, create)
         node.options = {}
     end
     return node
+end
+
+local function ensureStyleOptions(styleId)
+    local node = getStyleStore(styleId, true)
+    if not node then return nil end
+    if type(node.options) ~= "table" then
+        node.options = {}
+    end
+    local style = styles[styleId]
+    local defs = style and style.defaultOptions
+    if type(defs) == "table" then
+        for key, val in pairs(defs) do
+            if node.options[key] == nil then
+                node.options[key] = cloneValue(val)
+            end
+        end
+    end
+    return node.options
 end
 
 function MPT:RegisterStyle(def)
@@ -102,11 +129,22 @@ function MPT:ApplyStyle(styleId)
     end
     local style = styles[nextId]
     getStyleStore(nextId, true)
+    ensureStyleOptions(nextId)
     if style and style.onMount then
         style.onMount(self, style)
     end
     if style and style.onApply then
         style.onApply(self, style)
+    end
+    -- Re-apply font stack for the new style (clears outline/shadow leftovers).
+    if self.RefreshFont then
+        self:RefreshFont()
+    end
+    if self.LoadTimerPosition then
+        self:LoadTimerPosition()
+    end
+    if self.IsPreviewActive and self:IsPreviewActive() and self.ShowPreview then
+        self:ShowPreview()
     end
     return true
 end
@@ -155,7 +193,47 @@ function MPT:ResetActiveStyleColors()
     for key, c in pairs(style.defaultColors) do
         store.colors[key] = cloneColor(c)
     end
+    -- Keep typography/layout fully in sync after reset.
+    if self.RefreshFont then
+        self:RefreshFont()
+    end
     if self.RefreshAllColors then
         self:RefreshAllColors()
     end
+    if self.IsPreviewActive and self:IsPreviewActive() and self.ShowPreview then
+        self:ShowPreview()
+    end
+end
+
+function MPT:GetStyleOptionFor(styleId, key, fallback)
+    local sid = styleId or activeStyleId
+    local opts = ensureStyleOptions(sid)
+    if opts and opts[key] ~= nil then
+        return opts[key]
+    end
+    local style = styles[sid]
+    if style and type(style.defaultOptions) == "table" and style.defaultOptions[key] ~= nil then
+        return style.defaultOptions[key]
+    end
+    return fallback
+end
+
+function MPT:SetStyleOptionFor(styleId, key, value)
+    local sid = styleId or activeStyleId
+    local opts = ensureStyleOptions(sid)
+    if not opts then return end
+    opts[key] = value
+end
+
+function MPT:GetStyleOptionsFor(styleId)
+    local sid = styleId or activeStyleId
+    return ensureStyleOptions(sid) or {}
+end
+
+function MPT:GetActiveStyleOptionsSchema()
+    local style = styles[activeStyleId]
+    if style and type(style.optionsSchema) == "table" then
+        return style.optionsSchema
+    end
+    return {}
 end

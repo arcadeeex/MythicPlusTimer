@@ -22,10 +22,28 @@ local colorSchema = {
     { key = "colorButtons",         label = "Цвет кнопок интерфейса" },
 }
 
+local defaultOptions = {
+    font = "Friz Quadrata (default)",
+    scale = 1.0,
+    forcesTexture = "Blank",
+    affixText = true,
+    affixIcons = false,
+}
+
+local optionsSchema = {
+    { key = "font",         label = "Шрифт",            type = "font" },
+    { key = "forcesTexture",label = "Текстура",         type = "texture" },
+    { key = "scale",        label = "Масштаб таймера",  type = "scale" },
+    { key = "affixText",    label = "Показывать аффиксы текстом",  type = "toggle" },
+    { key = "affixIcons",   label = "Показывать аффиксы иконками", type = "toggle" },
+}
+
 MPT:RegisterStyle({
     id = "default",
-    label = "Default",
+    label = "Fabys",
     defaultColors = MPT.COLOR_DEFAULTS,
+    defaultOptions = defaultOptions,
+    optionsSchema = optionsSchema,
     colorSchema = colorSchema,
     onApply = function(self)
         if self.RefreshAllColors then
