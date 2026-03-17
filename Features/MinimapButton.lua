@@ -59,10 +59,22 @@ function MPT:InitMinimapButton()
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     btn:RegisterForDrag("RightButton")
 
+    -- Use Blizzard minimap button framing to match standard circular icons.
+    local bg = btn:CreateTexture(nil, "BACKGROUND")
+    bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+    bg:SetSize(20, 20)
+    bg:SetPoint("CENTER", btn, "CENTER", 0, 0)
+
     local tex = btn:CreateTexture(nil, "ARTWORK")
-    tex:SetAllPoints(btn)
     tex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\minimap_m.blp")
+    tex:SetSize(20, 20)
+    tex:SetPoint("CENTER", btn, "CENTER", 0, 0)
     btn.icon = tex
+
+    local border = btn:CreateTexture(nil, "OVERLAY")
+    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    border:SetSize(54, 54)
+    border:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
 
     btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight", "ADD")
 
