@@ -33,6 +33,8 @@ MythicPlus Timer подменяет стандартный интерфейс к
 
 ![Reloe Timer](screenshots/reloe-timer-ui.png)
 
+![Arcade Timer](screenshots/arcade-timer-ui.png)
+
 ### Панель настроек
 
 Команда для вызова настроек /mpt или ЛКМ по иконке на миникарте.
