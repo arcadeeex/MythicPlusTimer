@@ -40,7 +40,7 @@ local optionsSchema = {
 
 MPT:RegisterStyle({
     id = "default",
-    label = "Fabys",
+    label = "Minimal",
     defaultColors = MPT.COLOR_DEFAULTS,
     defaultOptions = defaultOptions,
     optionsSchema = optionsSchema,

@@ -27,7 +27,7 @@ local secondColors = {
 
 MPT:RegisterStyle({
     id = "second",
-    label = "Reloe",
+    label = "Panel",
     defaultColors = secondColors,
     defaultOptions = {
         font = "Friz Quadrata (default)",

@@ -252,6 +252,13 @@ end
 
 function MPT:Init()
     self:EnsureStyleState()
+    -- убрано из аддона; старый ключ не пишем в SavedVariables
+    if self.db and self.db.killLog ~= nil then
+        self.db.killLog = nil
+    end
+    if self.db and not self.db.debug and self.db.snapshots ~= nil then
+        self.db.snapshots = nil
+    end
     if self.InitStyleRegistry then
         self:InitStyleRegistry()
     end
@@ -298,30 +305,20 @@ SlashCmdList["MPT"] = function(msg)
 
     elseif cmd == "debug" then
         MPT.db.debug = not MPT.db.debug
+        if not MPT.db.debug and MPT.db.snapshots ~= nil then
+            MPT.db.snapshots = nil
+        end
         MPT:Print("Debug: " .. (MPT.db.debug and "ON" or "OFF"))
 
     elseif cmd == "reset" then
-        MPT.db.killLog       = {}
         MPT.db.learnedForces = {}
-        MPT:Print("killLog и learnedForces очищены.")
+        MPT:Print("Выученные проценты NPC сброшены.")
 
     elseif cmd == "timer" then
         MPT:ToggleTimer()
 
     elseif cmd == "preview" then
         MPT:ShowPreview()
-
-    elseif cmd == "kills" then
-        local kl = MPT.db and MPT.db.killLog
-        if not kl or #kl == 0 then
-            MPT:Print("killLog пуст. Убей мобов в ключе.")
-            return
-        end
-        MPT:Print(string.format("=== killLog: %d записей ===", #kl))
-        for i, e in ipairs(kl) do
-            MPT:Print(string.format("[%d] npcID=%d bar=%.2f%% name=%s",
-                i, e.npcID or 0, e.bar or 0, tostring(e.name)))
-        end
 
     elseif cmd == "findframes" then
         -- Печатает видимые глобальные фреймы с "Scenario", "Tracker", "Challenge", "Objective" в имени
@@ -348,6 +345,6 @@ SlashCmdList["MPT"] = function(msg)
         end
 
     else
-        MPT:Print("Команды: /mpt | config | debug | reset | timer | preview | kills | findframes")
+        MPT:Print("Команды: /mpt | debug | reset | timer | preview | findframes")
     end
 end

@@ -27,7 +27,7 @@ local arcadeColors = {
 
 MPT:RegisterStyle({
     id = "arcade",
-    label = "Arcade",
+    label = "Dashboard",
     defaultColors = arcadeColors,
     defaultOptions = {
         scale = 1.0,

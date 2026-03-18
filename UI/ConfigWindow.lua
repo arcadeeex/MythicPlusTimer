@@ -554,12 +554,41 @@ local function BuildGeneralSection()
     }
 
     local y = -34
+    local lastRowY = -34
     for i, row in ipairs(rows) do
         local cb = CreateCheck(frame, row.label, row.key, y, row.onApply)
         generalChecks[i] = cb
+        lastRowY = y
         y = y - 40
     end
-    frame.contentHeight = math.max(380, -y + 20)
+
+    -- под последним чекбоксом (высота чекбокса ~22, отступ 10)
+    local resetBtnY = lastRowY - 22 - 10
+    local resetLearnedBtn = CreateStyledButton(frame, 260, 28, "Сбросить выученные %")
+    resetLearnedBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, resetBtnY)
+    resetLearnedBtn:SetScript("OnClick", function()
+        if MPT.db then
+            MPT.db.learnedForces = {}
+            if MPT.Print then
+                MPT:Print("Выученные проценты NPC сброшены (используется статическая база).")
+            end
+        end
+    end)
+    resetLearnedBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Сбросить выученные %", 1, 1, 1)
+        GameTooltip:AddLine(
+            "Очищает learnedForces в сохранённых настройках: автоматически накопленные проценты за мобов. Статическая база аддона не меняется.",
+            0.8, 0.8, 0.8,
+            true
+        )
+        GameTooltip:Show()
+    end)
+    resetLearnedBtn:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    frame.contentHeight = math.max(380, math.abs(resetBtnY) + 28 + 24)
     frame:SetHeight(frame.contentHeight)
 end
 

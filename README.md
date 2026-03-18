@@ -31,9 +31,9 @@ MythicPlus Timer подменяет стандартный интерфейс к
 
 Также есть поддержка других стилей таймера:
 
-![Reloe Timer](screenshots/reloe-timer-ui.png)
+![Panel](screenshots/reloe-timer-ui.png)
 
-![Arcade Timer](screenshots/arcade-timer-ui.png)
+![Dashboard](screenshots/arcade-timer-ui.png)
 
 ### Панель настроек
 

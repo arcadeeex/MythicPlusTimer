@@ -51,7 +51,7 @@ end
 
 -- Собрать снапшот всех доступных данных
 local function TakeSnapshot(label)
-    if not MPT or not MPT.db then return end
+    if not MPT or not MPT.db or not MPT.db.debug then return end
     if not MPT.db.snapshots then MPT.db.snapshots = {} end
 
     local snap = {
@@ -276,62 +276,56 @@ local function TakeSnapshot(label)
     end
 
     -- Дебаг воскрешений: пробуем все методы C_ChallengeMode, похожие на res/brez/soul/charge
-    if MPT.db.debug then
-        snap.ResurrectionAPI = {}
-        if type(C_ChallengeMode) == "table" then
-            for key, val in pairs(C_ChallengeMode) do
-                local k = tostring(key):lower()
-                if k:find("resurrect") or k:find("res") or k:find("soul") or k:find("battle") or k:find("brez") or k:find("charge") or k:find("revive") or k:find("death") then
-                    local ok, result = pcall(function()
-                        if type(val) == "function" then
-                            return val()
-                        end
-                        return val
-                    end)
-                    snap.ResurrectionAPI[tostring(key)] = ok and tostring(result) or ("ERR: " .. tostring(result))
-                end
+    snap.ResurrectionAPI = {}
+    if type(C_ChallengeMode) == "table" then
+        for key, val in pairs(C_ChallengeMode) do
+            local k = tostring(key):lower()
+            if k:find("resurrect") or k:find("res") or k:find("soul") or k:find("battle") or k:find("brez") or k:find("charge") or k:find("revive") or k:find("death") then
+                local ok2, result = pcall(function()
+                    if type(val) == "function" then
+                        return val()
+                    end
+                    return val
+                end)
+                snap.ResurrectionAPI[tostring(key)] = ok2 and tostring(result) or ("ERR: " .. tostring(result))
             end
         end
     end
 
-    -- Сохраняем снапшот (держим только последние, чтобы не раздувать SavedVariables)
+    -- Сохраняем снапшот только в режиме отладки (см. проверку в начале функции)
     table.insert(MPT.db.snapshots, snap)
     local MAX_SNAPSHOTS = 10
     while #MPT.db.snapshots > MAX_SNAPSHOTS do
         table.remove(MPT.db.snapshots, 1)
     end
 
-    if MPT.db.debug then
-        MPT:Print(string.format("Снапшот #%d сохранён: %s", #MPT.db.snapshots, label))
+    MPT:Print(string.format("Снапшот #%d сохранён: %s", #MPT.db.snapshots, label))
 
-        -- GetActiveKeystoneInfo: ищем лимит времени (r3-r6 пока неизвестны)
-        if type(snap.KeystoneInfo) == "table" then
-            MPT:Print(string.format("  KeystoneInfo: level=%s affixes=[%s] r3=%s r4=%s r5=%s r6=%s",
-                snap.KeystoneInfo["r1"] or "nil",
-                snap.KeystoneInfo["r2_arr"] or "?",
-                snap.KeystoneInfo["r3"] or "nil",
-                snap.KeystoneInfo["r4"] or "nil",
-                snap.KeystoneInfo["r5"] or "nil",
-                snap.KeystoneInfo["r6"] or "nil"))
-        end
+    if type(snap.KeystoneInfo) == "table" then
+        MPT:Print(string.format("  KeystoneInfo: level=%s affixes=[%s] r3=%s r4=%s r5=%s r6=%s",
+            snap.KeystoneInfo["r1"] or "nil",
+            snap.KeystoneInfo["r2_arr"] or "?",
+            snap.KeystoneInfo["r3"] or "nil",
+            snap.KeystoneInfo["r4"] or "nil",
+            snap.KeystoneInfo["r5"] or "nil",
+            snap.KeystoneInfo["r6"] or "nil"))
+    end
 
-        -- GetCompletionInfo: ищем лимит времени (нужен до/после финиша)
-        if type(snap.CompletionInfo) == "table" then
-            MPT:Print(string.format("  CompletionInfo: r1=%s r2=%s r3=%s r4=%s r5=%s r6=%s r7=%s r8=%s",
-                snap.CompletionInfo["r1"] or "nil",
-                snap.CompletionInfo["r2"] or "nil",
-                snap.CompletionInfo["r3"] or "nil",
-                snap.CompletionInfo["r4"] or "nil",
-                snap.CompletionInfo["r5"] or "nil",
-                snap.CompletionInfo["r6"] or "nil",
-                snap.CompletionInfo["r7"] or "nil",
-                snap.CompletionInfo["r8"] or "nil"))
-        end
-        if type(snap.ResurrectionAPI) == "table" and next(snap.ResurrectionAPI) then
-            MPT:Print("  ResurrectionAPI (C_ChallengeMode):")
-            for k, v in pairs(snap.ResurrectionAPI) do
-                MPT:Print(string.format("    %s = %s", k, v))
-            end
+    if type(snap.CompletionInfo) == "table" then
+        MPT:Print(string.format("  CompletionInfo: r1=%s r2=%s r3=%s r4=%s r5=%s r6=%s r7=%s r8=%s",
+            snap.CompletionInfo["r1"] or "nil",
+            snap.CompletionInfo["r2"] or "nil",
+            snap.CompletionInfo["r3"] or "nil",
+            snap.CompletionInfo["r4"] or "nil",
+            snap.CompletionInfo["r5"] or "nil",
+            snap.CompletionInfo["r6"] or "nil",
+            snap.CompletionInfo["r7"] or "nil",
+            snap.CompletionInfo["r8"] or "nil"))
+    end
+    if type(snap.ResurrectionAPI) == "table" and next(snap.ResurrectionAPI) then
+        MPT:Print("  ResurrectionAPI (C_ChallengeMode):")
+        for k, v in pairs(snap.ResurrectionAPI) do
+            MPT:Print(string.format("    %s = %s", k, v))
         end
     end
 end
@@ -417,8 +411,6 @@ function MPT:DumpResurrectionSources()
 end
 
 -- Буфер недавних убийств для тестирования GUID парсинга (первые 30 убийств)
-local recentKillsDebug = {}
-local MAX_KILL_DEBUG = 30
 -- Последнее значение полоски прогресса (для дельты при обучении по убийствам).
 -- Должно обновляться часто (0.15 с), иначе дельта при убийстве будет включать несколько мобов.
 local lastForcesBar = 0
@@ -622,7 +614,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         TakeSnapshot("BOSS_KILL_" .. tostring(bossName or bossIndex))
 
     elseif event == "PLAYER_ENTERING_WORLD" then
-        recentKillsDebug = {}
         lastForcesBar = 0
         pendingLearnQueue = {}
         if C_ChallengeMode.IsChallengeModeActive() or IsInMythicDungeon() then
@@ -666,23 +657,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             })
         end
 
-        if #recentKillsDebug < MAX_KILL_DEBUG and MPT and MPT.db then
-            if not MPT.db.killLog then MPT.db.killLog = {} end
-            local entry = {
-                t      = GetTime(),
-                guid   = destGUID,
-                name   = destName,
-                npcID  = npcID,
-                bar    = GetProgressBarValue(),
-                flags  = destFlags,
-            }
-            table.insert(recentKillsDebug, entry)
-            table.insert(MPT.db.killLog, entry)
-            while #MPT.db.killLog > 100 do table.remove(MPT.db.killLog, 1) end
-            if MPT.db.debug then
-                MPT:Print(string.format("KILL: %s npcID=%d bar=%.2f%%",
-                    tostring(destName), npcID, entry.bar or 0))
-            end
+        if MPT.db and MPT.db.debug then
+            MPT:Print(string.format("KILL: %s npcID=%d bar=%.2f%%",
+                tostring(destName), npcID, GetProgressBarValue() or 0))
         end
     end
 end)
