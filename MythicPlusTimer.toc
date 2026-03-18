@@ -13,6 +13,7 @@ Core.lua
 UI\StyleRegistry.lua
 UI\Styles\Default.lua
 UI\Styles\Second.lua
+UI\Styles\Arcade.lua
 
 # Static NPC forces database
 Data\NpcDatabase.lua

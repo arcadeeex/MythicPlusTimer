@@ -109,8 +109,22 @@ local function GetStyleOption(key, fallback)
     return fallback
 end
 
+local function RoundToPixel(v, scale)
+    local s = (type(scale) == "number" and scale > 0) and scale or 1
+    if type(v) ~= "number" then return 0 end
+    return math.floor(v * s + 0.5) / s
+end
+
 local function IsSecondStyle()
     return MPT.GetActiveStyleId and MPT:GetActiveStyleId() == "second"
+end
+
+local function IsArcadeStyle()
+    return MPT.GetActiveStyleId and MPT:GetActiveStyleId() == "arcade"
+end
+
+local function IsCustomStyle()
+    return IsSecondStyle() or IsArcadeStyle()
 end
 
 local function RGBToHex(r, g, b)
@@ -247,6 +261,7 @@ local lastDisplayedAffixIDs
 
 local frame = CreateFrame("Frame", "MPTTimerFrame", UIParent)
 frame:SetWidth(280)
+local ARCADE_WIDTH = 300
 -- Высота задаётся в SetBossCount; начальная — компактная (0 боссов)
 local COMPACT_HEIGHT = 172  -- пересчитано при BOSS_LINE_HEIGHT=30
 frame:SetHeight(COMPACT_HEIGHT)
@@ -254,6 +269,19 @@ frame:SetFrameStrata("HIGH")
 frame:SetClampedToScreen(true)
 frame:SetMovable(true)
 frame:EnableMouse(true)
+
+local function SnapFrameToPixelGrid()
+    if not frame then return end
+    local left = frame:GetLeft()
+    local top = frame:GetTop()
+    local scale = frame:GetEffectiveScale() or 1
+    if not left or not top then return end
+    local snappedLeft = RoundToPixel(left, scale)
+    local snappedTop = RoundToPixel(top, scale)
+    if math.abs(snappedLeft - left) < 1e-6 and math.abs(snappedTop - top) < 1e-6 then return end
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", snappedLeft, snappedTop)
+end
 
 SaveTimerPosition = function()
     if not MPT.charDb then return end
@@ -268,11 +296,199 @@ SaveTimerPosition = function()
     MPT.charDb.timerPos = { x = x, y = y }
 end
 
+local isDraggingFrame = false
+local function StartFrameDrag()
+    if state.running or state.completed or (MPT.db and MPT.db.locked) then return end
+    isDraggingFrame = true
+    frame:StartMoving()
+end
+
+local function StopFrameDrag()
+    if isDraggingFrame then
+        frame:StopMovingOrSizing()
+        isDraggingFrame = false
+    else
+        frame:StopMovingOrSizing()
+    end
+    SnapFrameToPixelGrid()
+    SaveTimerPosition()
+end
+
 -- Лёгкий тёмный фон для читаемости текста (прозрачный)
 local bg = frame:CreateTexture(nil, "BACKGROUND")
 bg:SetAllPoints(frame)
 bg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
 bg:SetVertexColor(0, 0, 0, 0)
+
+local arcadeFrame = CreateFrame("Frame", nil, frame)
+arcadeFrame:SetAllPoints(frame)
+arcadeFrame:SetFrameLevel(frame:GetFrameLevel() - 1)
+local arcadeUnifiedBg = arcadeFrame:CreateTexture(nil, "BACKGROUND")
+arcadeUnifiedBg:SetAllPoints(arcadeFrame)
+arcadeUnifiedBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeUnifiedBg:Hide()
+local arcadeMiddleBg = arcadeFrame:CreateTexture(nil, "BACKGROUND")
+arcadeMiddleBg:SetPoint("TOPLEFT", arcadeFrame, "TOPLEFT", 0, -32)
+arcadeMiddleBg:SetPoint("TOPRIGHT", arcadeFrame, "TOPRIGHT", 0, -32)
+arcadeMiddleBg:SetPoint("BOTTOMLEFT", arcadeFrame, "BOTTOMLEFT", 0, 34)
+arcadeMiddleBg:SetPoint("BOTTOMRIGHT", arcadeFrame, "BOTTOMRIGHT", 0, 34)
+arcadeMiddleBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+local arcadeMiddleBorder = arcadeFrame:CreateTexture(nil, "BORDER")
+arcadeMiddleBorder:SetPoint("TOPLEFT", arcadeFrame, "TOPLEFT", 0, -32)
+arcadeMiddleBorder:SetPoint("TOPRIGHT", arcadeFrame, "TOPRIGHT", 0, -32)
+arcadeMiddleBorder:SetPoint("BOTTOMLEFT", arcadeFrame, "BOTTOMLEFT", 0, 34)
+arcadeMiddleBorder:SetPoint("BOTTOMRIGHT", arcadeFrame, "BOTTOMRIGHT", 0, 34)
+arcadeMiddleBorder:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeMiddleBorder:Hide()
+local arcadeHeaderBg = arcadeFrame:CreateTexture(nil, "BORDER")
+arcadeHeaderBg:SetPoint("TOPLEFT", arcadeFrame, "TOPLEFT", 0, 0)
+arcadeHeaderBg:SetPoint("TOPRIGHT", arcadeFrame, "TOPRIGHT", 0, 0)
+arcadeHeaderBg:SetHeight(32)
+arcadeHeaderBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+local arcadeHeaderBorder = arcadeFrame:CreateTexture(nil, "BORDER")
+arcadeHeaderBorder:SetPoint("TOPLEFT", arcadeFrame, "TOPLEFT", 0, 0)
+arcadeHeaderBorder:SetPoint("TOPRIGHT", arcadeFrame, "TOPRIGHT", 0, 0)
+arcadeHeaderBorder:SetHeight(32)
+arcadeHeaderBorder:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+local arcadeBottomBg = arcadeFrame:CreateTexture(nil, "BORDER")
+arcadeBottomBg:SetPoint("BOTTOMLEFT", arcadeFrame, "BOTTOMLEFT", 0, 0)
+arcadeBottomBg:SetPoint("BOTTOMRIGHT", arcadeFrame, "BOTTOMRIGHT", 0, 0)
+arcadeBottomBg:SetHeight(34)
+arcadeBottomBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+local arcadeBottomBorder = arcadeFrame:CreateTexture(nil, "BORDER")
+arcadeBottomBorder:SetPoint("BOTTOMLEFT", arcadeFrame, "BOTTOMLEFT", 8, 34)
+arcadeBottomBorder:SetPoint("BOTTOMRIGHT", arcadeFrame, "BOTTOMRIGHT", -8, 34)
+arcadeBottomBorder:SetHeight(1)
+arcadeBottomBorder:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+local arcadeMidBorderLeft = arcadeFrame:CreateTexture(nil, "BORDER")
+arcadeMidBorderLeft:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeMidBorderLeft:SetPoint("TOPLEFT", arcadeFrame, "TOPLEFT", 0, -32)
+arcadeMidBorderLeft:SetPoint("BOTTOMLEFT", arcadeFrame, "BOTTOMLEFT", 0, 34)
+arcadeMidBorderLeft:SetWidth(1)
+local arcadeMidBorderRight = arcadeFrame:CreateTexture(nil, "BORDER")
+arcadeMidBorderRight:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeMidBorderRight:SetPoint("TOPRIGHT", arcadeFrame, "TOPRIGHT", 0, -32)
+arcadeMidBorderRight:SetPoint("BOTTOMRIGHT", arcadeFrame, "BOTTOMRIGHT", 0, 34)
+arcadeMidBorderRight:SetWidth(1)
+local arcadeCornerSize = 16
+local arcadeCornerOverlap = 2
+local arcadeUseTopSegmentMask = false
+local arcadeOuterTop = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterTop:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeOuterTop:SetPoint("TOPLEFT", frame, "TOPLEFT", arcadeCornerSize - arcadeCornerOverlap, 0)
+arcadeOuterTop:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -(arcadeCornerSize - arcadeCornerOverlap), 0)
+arcadeOuterTop:SetHeight(1)
+arcadeOuterTop:Hide()
+
+local arcadeOuterBottom = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterBottom:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeOuterBottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", arcadeCornerSize - arcadeCornerOverlap, 0)
+arcadeOuterBottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -(arcadeCornerSize - arcadeCornerOverlap), 0)
+arcadeOuterBottom:SetHeight(1)
+arcadeOuterBottom:Hide()
+
+local arcadeOuterLeft = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterLeft:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeOuterLeft:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(arcadeCornerSize - arcadeCornerOverlap))
+arcadeOuterLeft:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, arcadeCornerSize - arcadeCornerOverlap)
+arcadeOuterLeft:SetWidth(1)
+arcadeOuterLeft:Hide()
+
+local arcadeOuterRight = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterRight:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeOuterRight:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -(arcadeCornerSize - arcadeCornerOverlap))
+arcadeOuterRight:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, arcadeCornerSize - arcadeCornerOverlap)
+arcadeOuterRight:SetWidth(1)
+arcadeOuterRight:Hide()
+
+local arcadeOuterCornerTL = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterCornerTL:SetSize(arcadeCornerSize, arcadeCornerSize)
+arcadeOuterCornerTL:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+arcadeOuterCornerTL:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_corner_mask.blp")
+arcadeOuterCornerTL:SetTexCoord(0, 1, 0, 1)
+arcadeOuterCornerTL:Hide()
+
+local arcadeOuterCornerTR = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterCornerTR:SetSize(arcadeCornerSize, arcadeCornerSize)
+arcadeOuterCornerTR:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+arcadeOuterCornerTR:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_corner_mask.blp")
+arcadeOuterCornerTR:SetTexCoord(1, 0, 0, 1)
+arcadeOuterCornerTR:Hide()
+
+local arcadeOuterCornerBL = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterCornerBL:SetSize(arcadeCornerSize, arcadeCornerSize)
+arcadeOuterCornerBL:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+arcadeOuterCornerBL:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_corner_mask.blp")
+arcadeOuterCornerBL:SetTexCoord(0, 1, 1, 0)
+arcadeOuterCornerBL:Hide()
+
+local arcadeOuterCornerBR = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterCornerBR:SetSize(arcadeCornerSize, arcadeCornerSize)
+arcadeOuterCornerBR:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+arcadeOuterCornerBR:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_corner_mask.blp")
+arcadeOuterCornerBR:SetTexCoord(1, 0, 1, 0)
+arcadeOuterCornerBR:Hide()
+
+local arcadeOuterTopMask = frame:CreateTexture(nil, "OVERLAY")
+arcadeOuterTopMask:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+arcadeOuterTopMask:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+arcadeOuterTopMask:SetHeight(32)
+arcadeOuterTopMask:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeOuterTopMask:Hide()
+
+local function SetArcadeOuterBorderVisible(show, r, g, b, a)
+    local alpha = a or 1
+    local lineLogical = 1
+    local borderOut = 0
+
+    arcadeOuterTop:ClearAllPoints()
+    arcadeOuterTop:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    arcadeOuterTop:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    arcadeOuterTop:SetHeight(lineLogical)
+    arcadeOuterBottom:ClearAllPoints()
+    arcadeOuterBottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    arcadeOuterBottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    arcadeOuterBottom:SetHeight(lineLogical)
+    arcadeOuterLeft:ClearAllPoints()
+    arcadeOuterLeft:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    arcadeOuterLeft:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    arcadeOuterLeft:SetWidth(lineLogical)
+    arcadeOuterRight:ClearAllPoints()
+    arcadeOuterRight:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    arcadeOuterRight:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    arcadeOuterRight:SetWidth(lineLogical)
+
+    local useTopMask = arcadeUseTopSegmentMask and true or false
+    local useSectionBorders = false
+    arcadeOuterTopMask:SetShown(show and useTopMask)
+    arcadeOuterTop:SetShown(show and (not useTopMask))
+    arcadeOuterBottom:SetShown(show)
+    arcadeOuterLeft:SetShown(show)
+    arcadeOuterRight:SetShown(show)
+    arcadeOuterCornerTL:Hide()
+    arcadeOuterCornerTR:Hide()
+    arcadeOuterCornerBL:Hide()
+    arcadeOuterCornerBR:Hide()
+    if show then
+        arcadeOuterTopMask:SetVertexColor(r, g, b, alpha)
+        arcadeOuterTop:SetVertexColor(r, g, b, alpha)
+        arcadeOuterBottom:SetVertexColor(r, g, b, alpha)
+        arcadeOuterLeft:SetVertexColor(r, g, b, alpha)
+        arcadeOuterRight:SetVertexColor(r, g, b, alpha)
+        arcadeOuterCornerTL:SetVertexColor(r, g, b, alpha)
+        arcadeOuterCornerTR:SetVertexColor(r, g, b, alpha)
+        arcadeOuterCornerBL:SetVertexColor(r, g, b, alpha)
+        arcadeOuterCornerBR:SetVertexColor(r, g, b, alpha)
+    end
+end
+arcadeFrame:Hide()
+
+local arcadeHeaderDivider = frame:CreateTexture(nil, "BORDER")
+arcadeHeaderDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+arcadeHeaderDivider:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -32)
+arcadeHeaderDivider:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -32)
+arcadeHeaderDivider:SetHeight(1)
+arcadeHeaderDivider:Hide()
 
 -- Заголовок: "+15 — Кузня Крови"
 frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -283,6 +499,26 @@ frame.title:SetWordWrap(true)
 frame.title:SetFont("Fonts\\FRIZQT__.TTF", 13, "")
 frame.title:SetTextColor(1, 1, 1)
 frame.title:SetText("ожидание...")
+
+frame.arcadeLevel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+frame.arcadeLevel:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -8)
+frame.arcadeLevel:SetJustifyH("LEFT")
+frame.arcadeLevel:SetFont("Fonts\\FRIZQT__.TTF", 14, "")
+frame.arcadeLevel:SetTextColor(1, 0.82, 0)
+frame.arcadeLevel:SetShadowOffset(0, 0)
+frame.arcadeLevel:SetShadowColor(0, 0, 0, 0)
+frame.arcadeLevel:SetText("")
+frame.arcadeLevel:Hide()
+
+frame.arcadeDungeon = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+frame.arcadeDungeon:SetPoint("LEFT", frame.arcadeLevel, "RIGHT", 8, 0)
+frame.arcadeDungeon:SetJustifyH("LEFT")
+frame.arcadeDungeon:SetFont("Fonts\\FRIZQT__.TTF", 14, "")
+frame.arcadeDungeon:SetTextColor(0.86, 0.90, 0.96)
+frame.arcadeDungeon:SetShadowOffset(0, 0)
+frame.arcadeDungeon:SetShadowColor(0, 0, 0, 0)
+frame.arcadeDungeon:SetText("")
+frame.arcadeDungeon:Hide()
 
 -- Аффиксы: две строки без \n, чтобы кириллица не портилась (напр. Мучительный)
 frame.affixes = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -331,16 +567,26 @@ for i = 1, MAX_AFFIX_ICONS do
     local iconFrame = CreateFrame("Frame", nil, frame.affixesIcons)
     iconFrame:SetWidth(AFFIX_ICON_SIZE)
     iconFrame:SetHeight(AFFIX_ICON_SIZE)
-    -- Иконка: кроп краёв чтобы скрыть угловые артефакты иконки
+    -- Иконка: квадратная, но с лёгким кропом встроенной wow-рамки.
     local tex = iconFrame:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(iconFrame)
-    tex:SetTexCoord(0.05, 0.95, 0.05, 0.95)
+    tex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
     iconFrame.tex = tex
     -- Кольцо-рамка поверх иконки: перекрывает квадратные углы тёмным кольцом
     local border = iconFrame:CreateTexture(nil, "OVERLAY")
     border:SetAllPoints(iconFrame)
     border:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\icon_border")
     iconFrame.border = border
+    local arcadeCornerMask = iconFrame:CreateTexture(nil, "OVERLAY")
+    arcadeCornerMask:SetAllPoints(iconFrame)
+    arcadeCornerMask:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_affix_corner_mask.blp")
+    arcadeCornerMask:Hide()
+    iconFrame.arcadeCornerMask = arcadeCornerMask
+    local arcadeRoundBorder = iconFrame:CreateTexture(nil, "OVERLAY")
+    arcadeRoundBorder:SetAllPoints(iconFrame)
+    arcadeRoundBorder:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_affix_border_mask.blp")
+    arcadeRoundBorder:Hide()
+    iconFrame.arcadeRoundBorder = arcadeRoundBorder
     -- Тултип аффиксов при наведении на иконку
     iconFrame:EnableMouse(true)
     iconFrame:SetScript("OnEnter", function(self) ShowAffixTooltip(self) end)
@@ -378,6 +624,99 @@ frame.plus3:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
 frame.plus3:SetTextColor(1, 1, 1)
 frame.plus3:SetText("")
 frame.plus3:Hide()
+
+-- Arcade: timer block widgets (left main timer, right +3/+2 rows)
+frame.arcadeBaseTimer = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadeBaseTimer:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
+frame.arcadeBaseTimer:SetTextColor(0.62, 0.68, 0.82)
+frame.arcadeBaseTimer:Hide()
+
+frame.arcadePlus3Label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadePlus3Label:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.arcadePlus3Label:SetText("+3")
+frame.arcadePlus3Label:SetTextColor(1.0, 0.90, 0.32)
+frame.arcadePlus3Label:Hide()
+
+frame.arcadePlus2Label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadePlus2Label:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.arcadePlus2Label:SetText("+2")
+frame.arcadePlus2Label:SetTextColor(0.55, 0.68, 1.0)
+frame.arcadePlus2Label:Hide()
+
+frame.arcadePlus3Remain = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadePlus3Remain:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.arcadePlus3Remain:SetJustifyH("RIGHT")
+frame.arcadePlus3Remain:SetTextColor(1.0, 0.90, 0.32)
+frame.arcadePlus3Remain:Hide()
+
+frame.arcadePlus2Remain = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadePlus2Remain:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.arcadePlus2Remain:SetJustifyH("RIGHT")
+frame.arcadePlus2Remain:SetTextColor(0.55, 0.68, 1.0)
+frame.arcadePlus2Remain:Hide()
+
+frame.arcadePlus3BarContainer = CreateFrame("Frame", nil, frame)
+frame.arcadePlus3BarContainer:SetHeight(4)
+frame.arcadePlus3BarContainer:Hide()
+frame.arcadePlus3BarBg = frame.arcadePlus3BarContainer:CreateTexture(nil, "BACKGROUND")
+frame.arcadePlus3BarBg:SetAllPoints(frame.arcadePlus3BarContainer)
+frame.arcadePlus3BarBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadePlus3BarBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+frame.arcadePlus3BarFillFrame = CreateFrame("Frame", nil, frame.arcadePlus3BarContainer)
+frame.arcadePlus3BarFillFrame:SetPoint("TOPLEFT", frame.arcadePlus3BarContainer, "TOPLEFT", 0, 0)
+frame.arcadePlus3BarFillFrame:SetWidth(1)
+frame.arcadePlus3BarFillFrame:SetHeight(4)
+frame.arcadePlus3BarFill = frame.arcadePlus3BarFillFrame:CreateTexture(nil, "ARTWORK")
+frame.arcadePlus3BarFill:SetAllPoints(frame.arcadePlus3BarFillFrame)
+frame.arcadePlus3BarFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+
+frame.arcadePlus2BarContainer = CreateFrame("Frame", nil, frame)
+frame.arcadePlus2BarContainer:SetHeight(4)
+frame.arcadePlus2BarContainer:Hide()
+frame.arcadePlus2BarBg = frame.arcadePlus2BarContainer:CreateTexture(nil, "BACKGROUND")
+frame.arcadePlus2BarBg:SetAllPoints(frame.arcadePlus2BarContainer)
+frame.arcadePlus2BarBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadePlus2BarBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+frame.arcadePlus2BarFillFrame = CreateFrame("Frame", nil, frame.arcadePlus2BarContainer)
+frame.arcadePlus2BarFillFrame:SetPoint("TOPLEFT", frame.arcadePlus2BarContainer, "TOPLEFT", 0, 0)
+frame.arcadePlus2BarFillFrame:SetWidth(1)
+frame.arcadePlus2BarFillFrame:SetHeight(4)
+frame.arcadePlus2BarFill = frame.arcadePlus2BarFillFrame:CreateTexture(nil, "ARTWORK")
+frame.arcadePlus2BarFill:SetAllPoints(frame.arcadePlus2BarFillFrame)
+frame.arcadePlus2BarFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+
+frame.arcadeTimerDivider = frame:CreateTexture(nil, "BORDER")
+frame.arcadeTimerDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeTimerDivider:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -84)
+frame.arcadeTimerDivider:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -84)
+frame.arcadeTimerDivider:SetHeight(1)
+frame.arcadeTimerDivider:Hide()
+
+frame.arcadeForcesTopDivider = frame:CreateTexture(nil, "BORDER")
+frame.arcadeForcesTopDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeForcesTopDivider:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -170)
+frame.arcadeForcesTopDivider:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -170)
+frame.arcadeForcesTopDivider:SetHeight(1)
+frame.arcadeForcesTopDivider:Hide()
+
+frame.arcadeForcesBottomDivider = frame:CreateTexture(nil, "BORDER")
+frame.arcadeForcesBottomDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeForcesBottomDivider:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -208)
+frame.arcadeForcesBottomDivider:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -208)
+frame.arcadeForcesBottomDivider:SetHeight(1)
+frame.arcadeForcesBottomDivider:Hide()
+
+frame.arcadeForcesTitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadeForcesTitle:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.arcadeForcesTitle:SetTextColor(0.62, 0.68, 0.82)
+frame.arcadeForcesTitle:SetJustifyH("LEFT")
+frame.arcadeForcesTitle:Hide()
+
+frame.arcadeForcesValue = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadeForcesValue:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.arcadeForcesValue:SetTextColor(0.62, 0.68, 0.82)
+frame.arcadeForcesValue:SetJustifyH("RIGHT")
+frame.arcadeForcesValue:Hide()
 
 -- Second-style timer bar (elapsed/base + +2/+3 marks)
 frame.timerBarContainer = CreateFrame("Frame", nil, frame)
@@ -443,8 +782,25 @@ local BOSS_FIRST_OFFSET = 8  -- отступ от top блока боссов д
 local FRAME_INNER_W   = 264   -- 280 - 2*8 (горизонтальные отступы)
 frame.bossLines = {}
 frame.bossRightLines = {}
+frame.bossRightKillLines = {}
+frame.bossRightDeltaLines = {}
+frame.bossRowBgs = {}
+frame.bossStatusIcons = {}
 frame.bossLineH = {}  -- текущая высота каждой строки (16 или 28)
 for i = 1, MAX_BOSSES do
+    local rowBg = frame:CreateTexture(nil, "BORDER")
+    rowBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+    rowBg:SetVertexColor(0.42, 0.54, 0.78, 0.20)
+    rowBg:SetDrawLayer("BORDER", 0)
+    rowBg:Hide()
+    frame.bossRowBgs[i] = rowBg
+
+    local bossIcon = frame:CreateTexture(nil, "OVERLAY")
+    bossIcon:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_boss_indicator.blp")
+    bossIcon:SetSize(6, 6)
+    bossIcon:Hide()
+    frame.bossStatusIcons[i] = bossIcon
+
     local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     fs:SetWidth(FRAME_INNER_W)
     fs:SetJustifyH("LEFT")
@@ -463,6 +819,24 @@ for i = 1, MAX_BOSSES do
     right:SetText("")
     right:Hide()
     frame.bossRightLines[i] = right
+
+    local rightKill = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rightKill:SetJustifyH("RIGHT")
+    rightKill:SetWordWrap(false)
+    rightKill:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    rightKill:SetTextColor(1, 1, 1)
+    rightKill:SetText("")
+    rightKill:Hide()
+    frame.bossRightKillLines[i] = rightKill
+
+    local rightDelta = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rightDelta:SetJustifyH("RIGHT")
+    rightDelta:SetWordWrap(false)
+    rightDelta:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    rightDelta:SetTextColor(1, 1, 1)
+    rightDelta:SetText("")
+    rightDelta:Hide()
+    frame.bossRightDeltaLines[i] = rightDelta
 
     frame.bossLineH[i] = BOSS_LINE_H1
 end
@@ -495,6 +869,17 @@ frame.forcesBarFill:SetHeight(14) -- 16px контейнер - 2px (1px top + 1p
 local fbFill = frame.forcesBarFill:CreateTexture(nil, "ARTWORK")
 fbFill:SetAllPoints(frame.forcesBarFill)
 fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+
+-- Дополнительный сегмент справа от основного заполнения:
+-- показывает % спуленного пака более тёмным цветом.
+frame.forcesBarPullFill = CreateFrame("Frame", nil, frame.forcesBarContainer)
+frame.forcesBarPullFill:SetPoint("TOPLEFT", frame.forcesBarFill, "TOPRIGHT", 0, 0)
+frame.forcesBarPullFill:SetWidth(0)
+frame.forcesBarPullFill:SetHeight(14)
+frame.forcesBarPullFill:Hide()
+local fbPullFill = frame.forcesBarPullFill:CreateTexture(nil, "ARTWORK")
+fbPullFill:SetAllPoints(frame.forcesBarPullFill)
+fbPullFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
 
 -- Таблица текстур для прогресс-бара (имя → путь)
 local SM_BAR = "Interface\\AddOns\\SharedMedia\\Media\\Statusbar\\"
@@ -706,12 +1091,77 @@ local function ApplyForcesColor()
             r, g, b = c.r, c.g, c.b
         end
     end
-    fbFill:SetVertexColor(r, g, b, 0.9)
+    local mainR, mainG, mainB = r, g, b
+    if IsArcadeStyle() then
+        -- Arcade: keep forces fill a bit brighter for readability.
+        mainR = math.min(1, r * 1.15 + 0.02)
+        mainG = math.min(1, g * 1.15 + 0.02)
+        mainB = math.min(1, b * 1.15 + 0.02)
+        local r0 = mainR * 0.55
+        local g0 = mainG * 0.55
+        local b0 = mainB * 0.55
+        local gradAlpha = fbFill["SetGradientAlpha"]
+        local ok = false
+        if type(gradAlpha) == "function" then
+            ok = pcall(gradAlpha, fbFill, "HORIZONTAL", r0, g0, b0, 0.9, mainR, mainG, mainB, 0.9)
+        end
+        if not ok then
+            ok = pcall(function()
+                fbFill:SetGradient("HORIZONTAL", CreateColor(r0, g0, b0, 0.9), CreateColor(mainR, mainG, mainB, 0.9))
+            end)
+        end
+        if not ok then
+            fbFill:SetVertexColor(mainR, mainG, mainB, 0.9)
+        end
+    else
+        fbFill:SetVertexColor(mainR, mainG, mainB, 0.9)
+    end
+    fbPullFill:SetVertexColor(mainR * 0.55, mainG * 0.55, mainB * 0.55, 0.95)
+end
+
+local function SetHorizontalGradientSafe(tex, r, g, b, a)
+    if not tex then return end
+    a = a or 0.95
+    local r0 = r * 0.55
+    local g0 = g * 0.55
+    local b0 = b * 0.55
+    if tex.SetGradientAlpha then
+        tex:SetGradientAlpha("HORIZONTAL", r0, g0, b0, a, r, g, b, a)
+    else
+        tex:SetVertexColor(r, g, b, a)
+    end
+end
+
+local function SetVerticalGradientSafe(tex, r, g, b, a)
+    if not tex then return end
+    a = a or 0.92
+    local rt = math.min(1, r + 0.02)
+    local gt = math.min(1, g + 0.02)
+    local bt = math.min(1, b + 0.02)
+    local rb = math.max(0, r - 0.03)
+    local gb = math.max(0, g - 0.03)
+    local bb = math.max(0, b - 0.03)
+    local ok = false
+    if tex.SetGradientAlpha then
+        ok = pcall(function()
+            tex:SetGradientAlpha("VERTICAL", rt, gt, bt, a, rb, gb, bb, a)
+        end)
+    end
+    if (not ok) and tex.SetGradient then
+        ok = pcall(function()
+            tex:SetGradient("VERTICAL", CreateColor(rt, gt, bt, a), CreateColor(rb, gb, bb, a))
+        end)
+    end
+    if not ok then
+        tex:SetVertexColor(r, g, b, a)
+    end
 end
 
 local function ApplyForcesTexture()
     local name = GetStyleOption("forcesTexture", "Blank")
-    fbFill:SetTexture(GetBarTexturePath(name))
+    local path = GetBarTexturePath(name)
+    fbFill:SetTexture(path)
+    fbPullFill:SetTexture(path)
     ApplyForcesColor()
 end
 ApplyForcesTexture()
@@ -729,12 +1179,29 @@ frame.forcesBar.text:SetJustifyH("CENTER")
 frame.forcesBar.text:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
 frame.forcesBar.text:SetTextColor(1, 1, 1)
 
--- SetValue: обновляет ширину заполнения (0-100%)
--- Ширина контейнера = ширина фрейма (280) - 2 * 8px отступа = 264px
-local FORCES_BAR_INNER_W = FRAME_INNER_W - 2  -- 262px (264 - 1px каждая сторона)
-frame.forcesBar.SetValue = function(_, pct)
-    local fillW = math.max(1, math.floor(FORCES_BAR_INNER_W * math.min(pct, 100) / 100 + 0.5))
+-- SetValue: обновляет ширину заполнения (0-100%) и pull-сегмента.
+frame.forcesBar.SetValue = function(_, pct, pullPct)
+    local arcadeStyle = IsArcadeStyle()
+    local inset = arcadeStyle and 0 or 1
+    local containerW = frame.forcesBarContainer:GetWidth()
+    if not containerW or containerW <= 0 then
+        containerW = FRAME_INNER_W
+    end
+    local innerW = math.max(1, math.floor(containerW - (inset * 2) + 0.5))
+    local basePct = math.max(0, math.min(pct or 0, 100))
+    local fillW = math.max(1, math.floor(innerW * basePct / 100 + 0.5))
     frame.forcesBarFill:SetWidth(fillW)
+    local pull = math.max(0, pullPct or 0)
+    local maxPull = math.max(0, 100 - basePct)
+    local shownPullPct = math.min(pull, maxPull)
+    local pullW = math.floor(innerW * shownPullPct / 100 + 0.5)
+    if pullW > 0 then
+        frame.forcesBarPullFill:SetWidth(pullW)
+        frame.forcesBarPullFill:Show()
+    else
+        frame.forcesBarPullFill:SetWidth(0)
+        frame.forcesBarPullFill:Hide()
+    end
 end
 
 frame.forcesBarContainer:Hide()
@@ -755,11 +1222,44 @@ function MPT:RefreshAllColors()
     ApplyForcesColor()
     self:ApplyButtonColors()
     self:ApplyDeathsBrIconColors()
-    if IsSecondStyle() then
+    if IsCustomStyle() then
         local bgr, bgg, bgb = GetColor("colorBackground")
-        bg:SetVertexColor(bgr, bgg, bgb, 0.72)
+        if IsArcadeStyle() then
+            bg:SetVertexColor(0, 0, 0, 0)
+            arcadeFrame:Show()
+            local hr = math.min(1, bgr + 0.08)
+            local hg = math.min(1, bgg + 0.08)
+            local hb = math.min(1, bgb + 0.08)
+            SetVerticalGradientSafe(arcadeUnifiedBg, bgr, bgg, bgb, 0.94)
+            arcadeUnifiedBg:Show()
+            arcadeMiddleBg:SetVertexColor(0, 0, 0, 0)
+            arcadeHeaderBg:SetVertexColor(0, 0, 0, 0)
+            arcadeBottomBg:SetVertexColor(0, 0, 0, 0)
+            arcadeHeaderBorder:Hide()
+            arcadeMiddleBorder:Hide()
+            arcadeBottomBorder:Show()
+            arcadeBottomBorder:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+            arcadeMidBorderLeft:Hide()
+            arcadeMidBorderRight:Hide()
+            SetArcadeOuterBorderVisible(true, 0.56, 0.61, 0.70, 0.62)
+            arcadeHeaderDivider:Show()
+            arcadeHeaderDivider:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+        else
+            arcadeUnifiedBg:Hide()
+            bg:SetVertexColor(bgr, bgg, bgb, 0.72)
+            arcadeFrame:Hide()
+            arcadeMiddleBorder:Hide()
+            arcadeBottomBorder:Hide()
+            arcadeHeaderDivider:Hide()
+            SetArcadeOuterBorderVisible(false)
+        end
         local tr, tg, tb = GetColor("colorTimer")
         frame.timerBar.text:SetTextColor(tr, tg, tb)
+    else
+        arcadeUnifiedBg:Hide()
+        arcadeFrame:Hide()
+        arcadeHeaderDivider:Hide()
+        SetArcadeOuterBorderVisible(false)
     end
     if state.level and (state.dungeonName or state.mapID) then
         local lvlStr = "+" .. state.level
@@ -782,37 +1282,86 @@ local function GetFontPath(name)
     return "Fonts\\FRIZQT__.TTF"
 end
 
+local function GetArcadeFontPath()
+    if MPT.FONTS then
+        for _, f in ipairs(MPT.FONTS) do
+            if type(f.name) == "string" and string.lower(f.name):find("avanti", 1, true) then
+                return f.path or "Fonts\\FRIZQT__.TTF"
+            end
+        end
+    end
+    return "Interface\\AddOns\\SharedMedia\\Media\\Fonts\\Avanti.ttf"
+end
+
+local function SetFontSafe(fs, path, size, flags, fallback)
+    if not fs then return end
+    local ok = fs:SetFont(path, size, flags or "")
+    if (not ok) and fallback then
+        fs:SetFont(fallback, size, flags or "")
+    end
+end
+
 local function ApplyFont()
     local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
-    frame.title:SetFont(path, 13, "")
-    frame.affixes:SetFont(path, 11, "")
-    frame.affixesLine2:SetFont(path, 11, "")
-    frame.timer:SetFont(path, 20, "")
-    frame.pauseLabel:SetFont(path, 20, "")
-    frame.plus2:SetFont(path, 12, "")
-    frame.plus3:SetFont(path, 12, "")
-    frame.timerBar.text:SetFont(path, 12, "")
-    frame.timerBarPlus2:SetFont(path, 11, "")
-    frame.timerBarPlus3:SetFont(path, 11, "")
-    for i = 1, MAX_BOSSES do
-        frame.bossLines[i]:SetFont(path, 11, "")
-        frame.bossRightLines[i]:SetFont(path, 11, "")
+    local isArcade = IsArcadeStyle()
+    if isArcade then
+        path = GetArcadeFontPath()
     end
-    frame.forces:SetFont(path, 11, "")
-    frame.forcesBar.text:SetFont(path, 11, "")
-    frame.deaths:SetFont(path, 11, "")
-    frame.battleRes:SetFont(path, 11, "")
+    SetFontSafe(frame.title, path, 13, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.affixes, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.affixesLine2, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.timer, path, 20, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.pauseLabel, path, 20, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.plus2, path, 12, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.plus3, path, 12, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.timerBar.text, path, 12, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.timerBarPlus2, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.timerBarPlus3, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadeBaseTimer, path, 12, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadePlus3Label, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadePlus2Label, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadePlus3Remain, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadePlus2Remain, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    for i = 1, MAX_BOSSES do
+        SetFontSafe(frame.bossLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.bossRightLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.bossRightKillLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.bossRightDeltaLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
+    end
+    SetFontSafe(frame.forces, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.forcesBar.text, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadeForcesTitle, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadeForcesValue, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.arcadeDeathPenaltyText, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.deaths, path, 11, "", "Fonts\\FRIZQT__.TTF")
+    SetFontSafe(frame.battleRes, path, 11, "", "Fonts\\FRIZQT__.TTF")
 
     -- Second style keeps outlined/shadowed overlay text even after font switch.
     if IsSecondStyle() then
-        frame.timerBar.text:SetFont(path, 13, "OUTLINE")
-        frame.timerBarPlus2:SetFont(path, 11, "OUTLINE")
-        frame.timerBarPlus3:SetFont(path, 11, "OUTLINE")
-        frame.forcesBar.text:SetFont(path, 11, "OUTLINE")
+        SetFontSafe(frame.timerBar.text, path, 13, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.timerBarPlus2, path, 11, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.timerBarPlus3, path, 11, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.forcesBar.text, path, 11, "OUTLINE", "Fonts\\FRIZQT__.TTF")
         frame.forcesBar.text:SetShadowOffset(1, -1)
         frame.forcesBar.text:SetShadowColor(0, 0, 0, 1)
         for i = 1, MAX_BOSSES do
-            frame.bossRightLines[i]:SetFont(path, 12, "OUTLINE")
+            SetFontSafe(frame.bossRightLines[i], path, 12, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        end
+    elseif IsArcadeStyle() then
+        SetFontSafe(frame.timerBar.text, path, 13, "", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.timerBarPlus2, path, 11, "", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.timerBarPlus3, path, 11, "", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.forcesBar.text, path, 11, "", "Fonts\\FRIZQT__.TTF")
+        frame.forcesBar.text:SetShadowOffset(0, 0)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, 0)
+        -- Keep both header texts without outline in Arcade.
+        SetFontSafe(frame.arcadeLevel, path, 14, "", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.arcadeDungeon, path, 14, "", "Fonts\\FRIZQT__.TTF")
+        for i = 1, MAX_BOSSES do
+            SetFontSafe(frame.bossLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.bossRightLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.bossRightKillLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.bossRightDeltaLines[i], path, 11, "", "Fonts\\FRIZQT__.TTF")
         end
     else
         frame.forcesBar.text:SetShadowOffset(0, 0)
@@ -870,6 +1419,57 @@ frame.battleRes:SetTextColor(1, 1, 1)
 frame.battleRes:SetJustifyH("LEFT")
 frame.battleRes:SetText("|cff888888—|r")
 
+frame.arcadeDeathsDivider = frame:CreateTexture(nil, "BORDER")
+frame.arcadeDeathsDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeDeathsDivider:SetSize(1, 14)
+frame.arcadeDeathsDivider:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+frame.arcadeDeathsDivider:Hide()
+
+frame.arcadeDeathPenaltyFrame = CreateFrame("Frame", nil, frame)
+frame.arcadeDeathPenaltyFrame:SetSize(34, 14)
+frame.arcadeDeathPenaltyFrame:Hide()
+frame.arcadeDeathPenaltyBg = frame.arcadeDeathPenaltyFrame:CreateTexture(nil, "BACKGROUND")
+frame.arcadeDeathPenaltyBg:SetAllPoints(frame.arcadeDeathPenaltyFrame)
+frame.arcadeDeathPenaltyBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeDeathPenaltyBg:SetVertexColor(0.95, 0.36, 0.42, 0.0)
+frame.arcadeDeathPenaltyBorderTop = frame.arcadeDeathPenaltyFrame:CreateTexture(nil, "BORDER")
+frame.arcadeDeathPenaltyBorderTop:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeDeathPenaltyBorderTop:SetPoint("TOPLEFT", frame.arcadeDeathPenaltyFrame, "TOPLEFT", 0, 0)
+frame.arcadeDeathPenaltyBorderTop:SetPoint("TOPRIGHT", frame.arcadeDeathPenaltyFrame, "TOPRIGHT", 0, 0)
+frame.arcadeDeathPenaltyBorderTop:SetHeight(1)
+frame.arcadeDeathPenaltyBorderTop:SetVertexColor(0.88, 0.36, 0.42, 0.0)
+frame.arcadeDeathPenaltyBorderBottom = frame.arcadeDeathPenaltyFrame:CreateTexture(nil, "BORDER")
+frame.arcadeDeathPenaltyBorderBottom:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeDeathPenaltyBorderBottom:SetPoint("BOTTOMLEFT", frame.arcadeDeathPenaltyFrame, "BOTTOMLEFT", 0, 0)
+frame.arcadeDeathPenaltyBorderBottom:SetPoint("BOTTOMRIGHT", frame.arcadeDeathPenaltyFrame, "BOTTOMRIGHT", 0, 0)
+frame.arcadeDeathPenaltyBorderBottom:SetHeight(1)
+frame.arcadeDeathPenaltyBorderBottom:SetVertexColor(0.88, 0.36, 0.42, 0.0)
+frame.arcadeDeathPenaltyBorderLeft = frame.arcadeDeathPenaltyFrame:CreateTexture(nil, "BORDER")
+frame.arcadeDeathPenaltyBorderLeft:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeDeathPenaltyBorderLeft:SetPoint("TOPLEFT", frame.arcadeDeathPenaltyFrame, "TOPLEFT", 0, -1)
+frame.arcadeDeathPenaltyBorderLeft:SetPoint("BOTTOMLEFT", frame.arcadeDeathPenaltyFrame, "BOTTOMLEFT", 0, 1)
+frame.arcadeDeathPenaltyBorderLeft:SetWidth(1)
+frame.arcadeDeathPenaltyBorderLeft:SetVertexColor(0.88, 0.36, 0.42, 0.0)
+frame.arcadeDeathPenaltyBorderRight = frame.arcadeDeathPenaltyFrame:CreateTexture(nil, "BORDER")
+frame.arcadeDeathPenaltyBorderRight:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+frame.arcadeDeathPenaltyBorderRight:SetPoint("TOPRIGHT", frame.arcadeDeathPenaltyFrame, "TOPRIGHT", 0, -1)
+frame.arcadeDeathPenaltyBorderRight:SetPoint("BOTTOMRIGHT", frame.arcadeDeathPenaltyFrame, "BOTTOMRIGHT", 0, 1)
+frame.arcadeDeathPenaltyBorderRight:SetWidth(1)
+frame.arcadeDeathPenaltyBorderRight:SetVertexColor(0.88, 0.36, 0.42, 0.0)
+frame.arcadeDeathPenaltyText = frame.arcadeDeathPenaltyFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+frame.arcadeDeathPenaltyText:SetPoint("CENTER", frame.arcadeDeathPenaltyFrame, "CENTER", 0, 0)
+frame.arcadeDeathPenaltyText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+frame.arcadeDeathPenaltyText:SetTextColor(1.0, 0.46, 0.46)
+frame.arcadeDeathPenaltyText:SetText("+0с")
+
+local function SetArcadePenaltyText(text)
+    frame.arcadeDeathPenaltyText:SetText(text or "+0с")
+    local w = math.floor((frame.arcadeDeathPenaltyText:GetStringWidth() or 0) + 5.5)
+    if w < 22 then w = 22 end
+    if w > 38 then w = 38 end
+    frame.arcadeDeathPenaltyFrame:SetWidth(w)
+end
+
 -- ============================================================
 -- Кнопки управления (развёрнутый режим: 14×14, у нижнего правого угла)
 -- ============================================================
@@ -883,6 +1483,16 @@ forfeitBtn:SetFrameLevel(frame:GetFrameLevel() + 20)
 local forfeitTex = forfeitBtn:CreateTexture(nil, "ARTWORK")
 forfeitTex:SetAllPoints(forfeitBtn)
 forfeitTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\forfeit.blp")
+local forfeitArcadeBg = forfeitBtn:CreateTexture(nil, "BACKGROUND")
+forfeitArcadeBg:SetAllPoints(forfeitBtn)
+forfeitArcadeBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+forfeitArcadeBg:SetVertexColor(0.20, 0.26, 0.38, 0.92)
+forfeitArcadeBg:Hide()
+local forfeitArcadeBorder = forfeitBtn:CreateTexture(nil, "BORDER")
+forfeitArcadeBorder:SetAllPoints(forfeitBtn)
+forfeitArcadeBorder:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+forfeitArcadeBorder:SetVertexColor(0.56, 0.61, 0.70, 0.0)
+forfeitArcadeBorder:Hide()
 forfeitBtn:SetScript("OnClick", function()
     pcall(function() C_ChallengeMode.Forfeit() end)
 end)
@@ -903,6 +1513,16 @@ pauseBtn:SetFrameLevel(frame:GetFrameLevel() + 20)
 local pauseTex = pauseBtn:CreateTexture(nil, "ARTWORK")
 pauseTex:SetAllPoints(pauseBtn)
 pauseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\pause.blp")
+local pauseArcadeBg = pauseBtn:CreateTexture(nil, "BACKGROUND")
+pauseArcadeBg:SetAllPoints(pauseBtn)
+pauseArcadeBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+pauseArcadeBg:SetVertexColor(0.20, 0.26, 0.38, 0.92)
+pauseArcadeBg:Hide()
+local pauseArcadeBorder = pauseBtn:CreateTexture(nil, "BORDER")
+pauseArcadeBorder:SetAllPoints(pauseBtn)
+pauseArcadeBorder:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+pauseArcadeBorder:SetVertexColor(0.56, 0.61, 0.70, 0.0)
+pauseArcadeBorder:Hide()
 pauseBtn:SetScript("OnClick", function()
     pcall(function() C_ChallengeMode.Pause() end)
 end)
@@ -915,6 +1535,33 @@ pauseBtn:SetScript("OnEnter", function(self)
     GameTooltip:Show()
 end)
 pauseBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+local function UpdateArcadeButtonFrames(isArcade)
+    local arcadeIconSize = 9
+    if isArcade then
+        forfeitArcadeBg:Show()
+        forfeitArcadeBorder:Hide()
+        pauseArcadeBg:Show()
+        pauseArcadeBorder:Hide()
+        forfeitTex:ClearAllPoints()
+        forfeitTex:SetSize(arcadeIconSize, arcadeIconSize)
+        forfeitTex:SetPoint("CENTER", forfeitBtn, "CENTER", 0, 0)
+        pauseTex:ClearAllPoints()
+        pauseTex:SetSize(arcadeIconSize, arcadeIconSize)
+        pauseTex:SetPoint("CENTER", pauseBtn, "CENTER", 0, 0)
+    else
+        forfeitArcadeBg:Hide()
+        forfeitArcadeBorder:Hide()
+        pauseArcadeBg:Hide()
+        pauseArcadeBorder:Hide()
+        forfeitTex:ClearAllPoints()
+        forfeitTex:SetSize(0, 0)
+        forfeitTex:SetAllPoints(forfeitBtn)
+        pauseTex:ClearAllPoints()
+        pauseTex:SetSize(0, 0)
+        pauseTex:SetAllPoints(pauseBtn)
+    end
+end
 
 -- ============================================================
 -- Кнопка сворачивания (TOPRIGHT, 10×10)
@@ -1008,7 +1655,7 @@ local savedPlus2Shown = false
 local savedPlus3Shown = false
 
 local function SetCollapsed(isCollapsed)
-    if IsSecondStyle() then
+    if IsCustomStyle() then
         collapsed = false
         collapseTex:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\minus.blp")
         frame:SetHeight(expandedHeight)
@@ -1049,12 +1696,21 @@ local function SetCollapsed(isCollapsed)
         frame.timerBarContainer:Hide()
         frame.timerBarPlus2:Hide()
         frame.timerBarPlus3:Hide()
+        frame.arcadeForcesTopDivider:Hide()
+        frame.arcadeForcesBottomDivider:Hide()
+        frame.arcadeForcesTitle:Hide()
+        frame.arcadeForcesValue:Hide()
         for i = 1, MAX_BOSSES do frame.bossLines[i]:Hide() end
         for i = 1, MAX_BOSSES do frame.bossRightLines[i]:Hide() end
+        for i = 1, MAX_BOSSES do frame.bossRightKillLines[i]:Hide() end
+        for i = 1, MAX_BOSSES do frame.bossRightDeltaLines[i]:Hide() end
+        for i = 1, MAX_BOSSES do frame.bossStatusIcons[i]:Hide() end
         frame.forces:Hide()
         frame.forcesBarContainer:Hide()
         frame.deathsIcon:Hide()
         frame.deaths:Hide()
+        frame.arcadeDeathsDivider:Hide()
+        frame.arcadeDeathPenaltyFrame:Hide()
         frame.battleRes:Hide()
         frame.battleResIcon:Hide()
         frame.pauseLabel:Hide()
@@ -1132,7 +1788,7 @@ local function SetCollapsed(isCollapsed)
         frame.timerBarContainer:Hide()
         frame.timerBarPlus2:Hide()
         frame.timerBarPlus3:Hide()
-        SetForcesMode((MPT.db and MPT.db.forcesBar or false) or IsSecondStyle())
+        SetForcesMode((MPT.db and MPT.db.forcesBar or false) or IsCustomStyle())
         frame.deathsIcon:Show()
         frame.deaths:Show()
         frame.battleRes:Show()
@@ -1164,11 +1820,11 @@ local function SetCollapsed(isCollapsed)
 end
 
 collapseBtn:SetScript("OnClick", function()
-    if IsSecondStyle() then return end
+    if IsCustomStyle() then return end
     SetCollapsed(not collapsed)
 end)
 collapseBtn:SetScript("OnEnter", function(self)
-    if IsSecondStyle() then return end
+    if IsCustomStyle() then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine(collapsed and "Развернуть" or "Свернуть" --[[@as string]], 1, 1, 1, 1)
@@ -1182,11 +1838,10 @@ titleTooltipFrame:SetPoint("TOPLEFT",  frame, "TOPLEFT",  0, 0)
 titleTooltipFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", -44, -64)
 titleTooltipFrame:EnableMouse(true)
 titleTooltipFrame:SetScript("OnMouseDown", function(_, button)
-    if button == "LeftButton" and not (MPT.db and MPT.db.locked) then frame:StartMoving() end
+    if button == "LeftButton" then StartFrameDrag() end
 end)
-titleTooltipFrame:SetScript("OnMouseUp", function()
-    frame:StopMovingOrSizing()
-    SaveTimerPosition()
+titleTooltipFrame:SetScript("OnMouseUp", function(_, button)
+    if button == "LeftButton" then StopFrameDrag() end
 end)
 
 -- Вспомогательная функция тултипа аффиксов (используется в affixTooltipFrame и иконках)
@@ -1237,11 +1892,10 @@ affixTooltipFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, -64)
 affixTooltipFrame:SetFrameLevel(frame:GetFrameLevel() + 5)
 affixTooltipFrame:EnableMouse(true)
 affixTooltipFrame:SetScript("OnMouseDown", function(_, button)
-    if button == "LeftButton" and not (MPT.db and MPT.db.locked) then frame:StartMoving() end
+    if button == "LeftButton" then StartFrameDrag() end
 end)
-affixTooltipFrame:SetScript("OnMouseUp", function()
-    frame:StopMovingOrSizing()
-    SaveTimerPosition()
+affixTooltipFrame:SetScript("OnMouseUp", function(_, button)
+    if button == "LeftButton" then StopFrameDrag() end
 end)
 affixTooltipFrame:SetScript("OnEnter", function(self)
     ShowAffixTooltip(self)
@@ -1267,65 +1921,186 @@ local function UpdateBossLayout(count, bossTopY)
     lastBossTopY = bossTopY
     lastBossCount = count
 
-    if IsSecondStyle() then
-        local rowH = 19
+    if IsSecondStyle() or IsArcadeStyle() then
+        local rowH = IsArcadeStyle() and 26 or 19
         local forcesH = 16
-        local timerBarTop = -24
-        local bossTop = timerBarTop - 23
+        local timerBarTop = IsArcadeStyle() and -56 or -24
+        local bossTop = timerBarTop - (IsArcadeStyle() and 40 or 23)
+        local arcadeStyle = IsArcadeStyle()
         local rightW = 118
         local leftW = math.max(110, frame:GetWidth() - rightW - 18)
+        local killW, deltaW, colGap = 46, 40, 8
+        if arcadeStyle then
+            leftW = math.max(110, frame:GetWidth() - (killW + deltaW + colGap) - 20)
+        end
 
         frame.timerBarContainer:ClearAllPoints()
         frame.timerBarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, timerBarTop)
         frame.timerBarContainer:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, timerBarTop)
 
+        local nextBossIndex = nil
+        if IsArcadeStyle() and state and state.bosses then
+            for j = 1, count do
+                if state.bosses[j] and not state.bosses[j].killed then
+                    nextBossIndex = j
+                    break
+                end
+            end
+        end
+
         for i = 1, count do
             local y = bossTop - (i - 1) * rowH
+            local rowBg = frame.bossRowBgs[i]
+            if rowBg then
+                rowBg:ClearAllPoints()
+                if arcadeStyle then
+                    rowBg:SetTexture("Interface\\AddOns\\MythicPlusTimer\\Media\\arcade_row_highlight.blp")
+                    rowBg:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, y + 1)
+                    rowBg:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, y + 1)
+                    rowBg:SetHeight(rowH - 4)
+                else
+                    rowBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+                    rowBg:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, y - 1)
+                    rowBg:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, y - 1)
+                    rowBg:SetHeight(rowH - 2)
+                end
+                if arcadeStyle and nextBossIndex and i == nextBossIndex then
+                    rowBg:SetVertexColor(0.42, 0.54, 0.78, 0.16)
+                    rowBg:Show()
+                else
+                    rowBg:Hide()
+                end
+            end
             local left = frame.bossLines[i]
             left:ClearAllPoints()
-            left:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, y)
-            left:SetWidth(leftW)
             left:SetWordWrap(false)
 
             local right = frame.bossRightLines[i]
             right:ClearAllPoints()
-            right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, y)
-            right:SetWidth(rightW)
-            right:Show()
+            if arcadeStyle then
+                local iconTex = frame.bossStatusIcons[i]
+                iconTex:ClearAllPoints()
+                iconTex:SetPoint("LEFT", rowBg, "LEFT", 8, 0)
+                iconTex:SetSize(6, 6)
+                iconTex:Show()
+                right:Hide()
+                local rightDelta = frame.bossRightDeltaLines[i]
+                local rightKill = frame.bossRightKillLines[i]
+                rightDelta:ClearAllPoints()
+                rightDelta:SetPoint("RIGHT", rowBg, "RIGHT", -10, 0)
+                rightDelta:SetWidth(deltaW)
+                rightDelta:Show()
+                rightKill:ClearAllPoints()
+                rightKill:SetPoint("RIGHT", rightDelta, "LEFT", -colGap, 0)
+                rightKill:SetWidth(killW)
+                rightKill:Show()
+                left:SetPoint("LEFT", iconTex, "RIGHT", 6, 0)
+                left:SetPoint("RIGHT", rightKill, "LEFT", -12, 0)
+            else
+                frame.bossStatusIcons[i]:Hide()
+                left:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, y)
+                left:SetWidth(leftW)
+                right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, y)
+                right:SetWidth(rightW)
+                right:Show()
+                frame.bossRightKillLines[i]:Hide()
+                frame.bossRightDeltaLines[i]:Hide()
+            end
         end
         for i = count + 1, MAX_BOSSES do
+            if frame.bossRowBgs[i] then frame.bossRowBgs[i]:Hide() end
+            frame.bossStatusIcons[i]:Hide()
             frame.bossRightLines[i]:Hide()
+            frame.bossRightKillLines[i]:Hide()
+            frame.bossRightDeltaLines[i]:Hide()
         end
 
-        local forcesY = bossTop - count * rowH - 2
-        frame.forcesBarContainer:ClearAllPoints()
-        frame.forcesBarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, forcesY)
-        frame.forcesBarContainer:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, forcesY)
+        local forcesBarY
+        local forcesBottomDividerY
+        if arcadeStyle then
+            local forcesTopDividerY = bossTop - count * rowH - 4
+            local forcesTitleY = forcesTopDividerY - 10
+            forcesBarY = forcesTitleY - 17
+            forcesBottomDividerY = forcesBarY - 14
 
-        local btnSize = 10
+            frame.arcadeForcesTopDivider:ClearAllPoints()
+            frame.arcadeForcesTopDivider:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, forcesTopDividerY)
+            frame.arcadeForcesTopDivider:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, forcesTopDividerY)
+            frame.arcadeForcesTopDivider:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+            frame.arcadeForcesTopDivider:Show()
+
+            frame.arcadeForcesTitle:ClearAllPoints()
+            frame.arcadeForcesTitle:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, forcesTitleY)
+            frame.arcadeForcesTitle:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, forcesTitleY)
+            frame.arcadeForcesTitle:Show()
+
+            frame.arcadeForcesValue:ClearAllPoints()
+            frame.arcadeForcesValue:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, forcesTitleY)
+            frame.arcadeForcesValue:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, forcesTitleY)
+            frame.arcadeForcesValue:Show()
+
+            frame.arcadeForcesBottomDivider:Hide()
+        else
+            -- Keep Reloe spacing tight under boss list.
+            forcesBarY = bossTop - count * rowH - 2
+            forcesBottomDividerY = forcesBarY - forcesH - 6
+            frame.arcadeForcesTopDivider:Hide()
+            frame.arcadeForcesBottomDivider:Hide()
+            frame.arcadeForcesTitle:Hide()
+            frame.arcadeForcesValue:Hide()
+        end
+
+        frame.forcesBarContainer:ClearAllPoints()
+        frame.forcesBarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", arcadeStyle and 8 or 4, forcesBarY)
+        frame.forcesBarContainer:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, forcesBarY)
+
+        local btnSize = IsArcadeStyle() and 18 or 10
         local btnGap = 6
         local bottomPad = 1
         forfeitBtn:SetSize(btnSize, btnSize)
         pauseBtn:SetSize(btnSize, btnSize)
+        UpdateArcadeButtonFrames(arcadeStyle)
         forfeitBtn:ClearAllPoints()
-        forfeitBtn:SetPoint("TOPRIGHT", frame.forcesBarContainer, "BOTTOMRIGHT", 0, -btnGap)
+        if arcadeStyle then
+            forfeitBtn:SetPoint("TOPRIGHT", arcadeBottomBorder, "BOTTOMRIGHT", -8, -btnGap)
+        else
+            forfeitBtn:SetPoint("TOPRIGHT", frame.forcesBarContainer, "BOTTOMRIGHT", 0, -btnGap)
+        end
         pauseBtn:ClearAllPoints()
         pauseBtn:SetPoint("RIGHT", forfeitBtn, "LEFT", -4, 0)
 
-        local controlsBottom = forcesY - forcesH - btnGap - forfeitBtn:GetHeight()
+        local controlsBottom
+        if arcadeStyle then
+            controlsBottom = forcesBottomDividerY - btnGap - forfeitBtn:GetHeight()
+        else
+            controlsBottom = forcesBarY - forcesH - btnGap - forfeitBtn:GetHeight()
+        end
         local bottomY = controlsBottom - bottomPad
         frame:SetHeight(-bottomY + 8)
         return
     end
 
     for i = 1, MAX_BOSSES do
+        if frame.bossRowBgs[i] then frame.bossRowBgs[i]:Hide() end
+    end
+    frame.arcadeForcesTopDivider:Hide()
+    frame.arcadeForcesBottomDivider:Hide()
+    frame.arcadeForcesTitle:Hide()
+    frame.arcadeForcesValue:Hide()
+    frame.arcadeDeathsDivider:Hide()
+    frame.arcadeDeathPenaltyFrame:Hide()
+    for i = 1, MAX_BOSSES do frame.bossStatusIcons[i]:Hide() end
+    for i = 1, MAX_BOSSES do
         frame.bossRightLines[i]:Hide()
+        frame.bossRightKillLines[i]:Hide()
+        frame.bossRightDeltaLines[i]:Hide()
         local left = frame.bossLines[i]
         left:SetWidth(FRAME_INNER_W)
         left:SetWordWrap(true)
     end
     forfeitBtn:SetSize(12, 12)
     pauseBtn:SetSize(12, 12)
+    UpdateArcadeButtonFrames(false)
     forfeitBtn:ClearAllPoints()
     forfeitBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 14)
     pauseBtn:ClearAllPoints()
@@ -1377,18 +2152,35 @@ end
 
 local function SetBossCount(count)
     count = math.max(0, math.min(count, MAX_BOSSES))
-    local secondStyle = IsSecondStyle()
+    local secondStyle = IsCustomStyle()
+    local arcadeStyle = IsArcadeStyle()
     for i = 1, MAX_BOSSES do
         if i <= count then
             frame.bossLines[i]:Show()
             if secondStyle then
                 frame.bossRightLines[i]:Show()
+                if arcadeStyle then
+                    frame.bossRightLines[i]:Hide()
+                    frame.bossRightKillLines[i]:Show()
+                    frame.bossRightDeltaLines[i]:Show()
+                    frame.bossStatusIcons[i]:Show()
+                else
+                    frame.bossRightKillLines[i]:Hide()
+                    frame.bossRightDeltaLines[i]:Hide()
+                    frame.bossStatusIcons[i]:Hide()
+                end
             else
                 frame.bossRightLines[i]:Hide()
+                frame.bossRightKillLines[i]:Hide()
+                frame.bossRightDeltaLines[i]:Hide()
+                frame.bossStatusIcons[i]:Hide()
             end
         else
             frame.bossLines[i]:Hide()
             frame.bossRightLines[i]:Hide()
+            frame.bossRightKillLines[i]:Hide()
+            frame.bossRightDeltaLines[i]:Hide()
+            frame.bossStatusIcons[i]:Hide()
         end
     end
     UpdateBossLayout(count)
@@ -1399,14 +2191,11 @@ end
 -- Разрешено только в режиме превью (не во время активного ключа)
 -- ============================================================
 frame:SetScript("OnMouseDown", function(self, button)
-    if button == "LeftButton" and not state.running and not state.completed and not (MPT.db and MPT.db.locked) then
-        self:StartMoving()
-    end
+    if button == "LeftButton" then StartFrameDrag() end
 end)
 
-frame:SetScript("OnMouseUp", function(self)
-    self:StopMovingOrSizing()
-    SaveTimerPosition()
+frame:SetScript("OnMouseUp", function(_, button)
+    if button == "LeftButton" then StopFrameDrag() end
 end)
 
 -- ============================================================
@@ -1428,7 +2217,7 @@ local function UpdateTimerLayout(showPlus2, showPlus3)
         local line2H = math.max(14, frame.affixesLine2:GetStringHeight() or 14)
         affixBottom = affixBottom - 4 - line2H
     end
-    if frame.affixesIcons:IsShown() and not IsSecondStyle() then
+    if frame.affixesIcons:IsShown() and not IsCustomStyle() then
         affixBottom = affixBottom - 8 - AFFIX_ICON_SIZE
     end
     local timerY = affixBottom
@@ -1471,7 +2260,7 @@ local function UpdateTimerLayout(showPlus2, showPlus3)
 end
 
 SetForcesMode = function(useBar)
-    if IsSecondStyle() then
+    if IsCustomStyle() then
         useBar = true
     end
     if useBar then
@@ -1543,7 +2332,8 @@ UpdateDisplay = function()
     -- Таймер
     local useReverse = MPT.db and MPT.db.reverseTimer
     local active = state.running or state.completed
-    local secondStyle = IsSecondStyle()
+    local secondStyle = IsCustomStyle()
+    local arcadeStyle = IsArcadeStyle()
     local displayTimerText = "--:--"
     if active and state.elapsed then
         local timerText
@@ -1596,96 +2386,295 @@ UpdateDisplay = function()
     end
 
     if secondStyle then
-        frame:SetWidth(320)
+        frame:SetWidth(arcadeStyle and ARCADE_WIDTH or 320)
+        local arcadeFontPath = GetArcadeFontPath()
         local bgr, bgg, bgb = GetColor("colorBackground")
-        bg:SetVertexColor(bgr, bgg, bgb, 0.72)
-        frame.title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+        if arcadeStyle then
+            bg:SetVertexColor(0, 0, 0, 0)
+            arcadeFrame:Show()
+            local hr = math.min(1, bgr + 0.08)
+            local hg = math.min(1, bgg + 0.08)
+            local hb = math.min(1, bgb + 0.08)
+            SetVerticalGradientSafe(arcadeUnifiedBg, bgr, bgg, bgb, 0.94)
+            arcadeUnifiedBg:Show()
+            arcadeMiddleBg:SetVertexColor(0, 0, 0, 0)
+            arcadeHeaderBg:SetVertexColor(0, 0, 0, 0)
+            arcadeBottomBg:SetVertexColor(0, 0, 0, 0)
+            arcadeHeaderBorder:Hide()
+            arcadeMiddleBorder:Hide()
+            arcadeBottomBorder:Show()
+            arcadeBottomBorder:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+            arcadeMidBorderLeft:Hide()
+            arcadeMidBorderRight:Hide()
+            SetArcadeOuterBorderVisible(true, 0.56, 0.61, 0.70, 0.62)
+            arcadeHeaderDivider:Show()
+        else
+            arcadeUnifiedBg:Hide()
+            bg:SetVertexColor(bgr, bgg, bgb, 0.72)
+            arcadeFrame:Hide()
+            arcadeMiddleBorder:Hide()
+            arcadeBottomBorder:Hide()
+            arcadeHeaderDivider:Hide()
+            SetArcadeOuterBorderVisible(false)
+        end
+        SetFontSafe(frame.title, arcadeStyle and arcadeFontPath or "Fonts\\FRIZQT__.TTF", 14, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
         frame.title:SetWordWrap(false)
         frame.title:ClearAllPoints()
-        frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -3)
+        frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", arcadeStyle and 10 or 4, arcadeStyle and -8 or -3)
         collapseBtn:Hide()
         forfeitBtn:Show()
         pauseBtn:Show()
+        UpdateArcadeButtonFrames(arcadeStyle)
         forfeitSmall:Hide()
         pauseSmall:Hide()
 
-        frame.timer:Hide()
         frame.plus2:Hide()
         frame.plus3:Hide()
         frame.pauseLabel:Hide()
         frame.affixes:Hide()
         frame.affixesLine2:Hide()
-        frame.timerBarContainer:Show()
-        frame.timerBar.text:SetFont("Fonts\\FRIZQT__.TTF", 13, "OUTLINE")
-        local tbr, tbg, tbb = GetColor("colorTimerBar")
-        tbFill:SetVertexColor(tbr, tbg, tbb, 0.95)
-        fbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
-        fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        frame.forcesBarContainer:SetHeight(arcadeStyle and 6 or 16)
+        frame.forcesBarFill:ClearAllPoints()
+        if arcadeStyle then
+            frame.forcesBarFill:SetPoint("TOPLEFT", frame.forcesBarContainer, "TOPLEFT", 0, 0)
+            frame.forcesBarFill:SetHeight(6)
+            frame.forcesBarPullFill:SetHeight(6)
+            fbBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbPullFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        else
+            frame.forcesBarFill:SetPoint("TOPLEFT", frame.forcesBarContainer, "TOPLEFT", 1, -1)
+            frame.forcesBarFill:SetHeight(14)
+            frame.forcesBarPullFill:SetHeight(14)
+            fbBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbPullFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        end
         ApplyForcesColor()
-        frame.forcesBar.text:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
-        frame.forcesBar.text:SetShadowOffset(1, -1)
-        frame.forcesBar.text:SetShadowColor(0, 0, 0, 1)
+        if arcadeStyle then
+            fbBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+        else
+            fbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
+        end
+        SetFontSafe(frame.forcesBar.text, arcadeStyle and arcadeFontPath or "Fonts\\FRIZQT__.TTF", 11, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        frame.forcesBar.text:SetShadowOffset(arcadeStyle and 0 or 1, arcadeStyle and 0 or -1)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, arcadeStyle and 0 or 1)
         local timerR, timerG, timerB = GetColor("colorTimer")
-        frame.timerBar.text:SetTextColor(timerR, timerG, timerB)
-        frame.timerBarMark2:SetVertexColor(timerR, timerG, timerB, 1)
-        frame.timerBarMark3:SetVertexColor(timerR, timerG, timerB, 1)
-        frame.timerBarPlus2:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
-        frame.timerBarPlus3:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
 
-        -- Top-right skull counter similar to reference layout
+        if arcadeStyle then
+            frame.title:Hide()
+            frame.arcadeForcesTitle:Show()
+            frame.arcadeForcesValue:Show()
+            local lvlText = state.level and ("+" .. state.level) or "+?"
+            local dungeonText = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
+            frame.arcadeLevel:SetText(RGBToHex(GetColor("colorTitle")) .. lvlText .. "|r")
+            frame.arcadeDungeon:SetText(RGBToHex(GetColor("colorAffixes")) .. dungeonText .. "|r")
+            frame.arcadeLevel:Show()
+            frame.arcadeDungeon:Show()
+            frame.arcadeTimerDivider:Show()
+            frame.arcadeTimerDivider:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+
+            -- Left: main timer and base time below.
+            frame.timer:Show()
+            frame.timer:ClearAllPoints()
+            frame.timer:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -42)
+            frame.timer:SetTextColor(timerR, timerG, timerB)
+            SetFontSafe(frame.timer, arcadeFontPath, 24, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadeBaseTimer, arcadeFontPath, 12, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus3Label, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus2Label, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus3Remain, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus2Remain, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            frame.timer:SetText(FormatTime(effElapsed))
+            if baseLimit then
+                frame.arcadeBaseTimer:SetText("|cff7b88a7/ " .. FormatTime(baseLimit) .. "|r")
+            else
+                frame.arcadeBaseTimer:SetText("")
+            end
+            frame.arcadeBaseTimer:ClearAllPoints()
+            frame.arcadeBaseTimer:SetPoint("TOPLEFT", frame.timer, "BOTTOMLEFT", 2, -2)
+            frame.arcadeBaseTimer:Show()
+
+            -- Hide legacy combined bar for Arcade timer section.
+            frame.timerBarContainer:Hide()
+            frame.timerBarMark2:Hide()
+            frame.timerBarMark3:Hide()
+            frame.timerBarPlus2:Hide()
+            frame.timerBarPlus3:Hide()
+
+            -- Right: +3/+2 rows with mini-bars and remaining time at right.
+            local blockX = 98
+            local barW = 124
+            local rowTop = -44
+            local rowGap = 18
+            local function placeArcadeRow(rowIndex, limit, labelFs, barContainer, barBgTex, fillFrame, fillTex, remainFs, labelColorR, labelColorG, labelColorB, fillR, fillG, fillB)
+                if not (active and baseLimit and limit and limit > 0) then
+                    labelFs:Hide()
+                    barContainer:Hide()
+                    remainFs:Hide()
+                    return
+                end
+                local y = rowTop - ((rowIndex - 1) * rowGap)
+                labelFs:ClearAllPoints()
+                labelFs:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX, y)
+                labelFs:SetTextColor(labelColorR, labelColorG, labelColorB)
+                labelFs:Show()
+
+                barContainer:ClearAllPoints()
+                barContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20, y - 2)
+                barContainer:SetWidth(barW)
+                barContainer:Show()
+                barBgTex:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+                SetHorizontalGradientSafe(fillTex, fillR, fillG, fillB, 0.95)
+                local pct = math.max(0, math.min(1, effElapsed / limit))
+                fillFrame:SetWidth(math.max(1, math.floor(barW * pct + 0.5)))
+
+                remainFs:ClearAllPoints()
+                remainFs:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20 + barW + 8, y)
+                remainFs:SetTextColor(labelColorR, labelColorG, labelColorB)
+                local remain = (limit - effElapsed)
+                if remain >= 0 then
+                    remainFs:SetText("-" .. FormatTime(remain))
+                else
+                    remainFs:SetText("+" .. FormatTime(-remain))
+                end
+                remainFs:Show()
+            end
+            placeArcadeRow(1, limit3, frame.arcadePlus3Label, frame.arcadePlus3BarContainer, frame.arcadePlus3BarBg, frame.arcadePlus3BarFillFrame, frame.arcadePlus3BarFill, frame.arcadePlus3Remain, 1.0, 0.90, 0.32, 1.0, 0.90, 0.32)
+            placeArcadeRow(2, limit2, frame.arcadePlus2Label, frame.arcadePlus2BarContainer, frame.arcadePlus2BarBg, frame.arcadePlus2BarFillFrame, frame.arcadePlus2BarFill, frame.arcadePlus2Remain, 0.55, 0.68, 1.0, 0.55, 0.68, 1.0)
+        else
+            frame.title:Show()
+            frame.arcadeForcesTopDivider:Hide()
+            frame.arcadeForcesBottomDivider:Hide()
+            frame.arcadeForcesTitle:Hide()
+            frame.arcadeForcesValue:Hide()
+            frame.arcadeLevel:Hide()
+            frame.arcadeDungeon:Hide()
+            frame.arcadeBaseTimer:Hide()
+            frame.arcadePlus3Label:Hide()
+            frame.arcadePlus2Label:Hide()
+            frame.arcadePlus3Remain:Hide()
+            frame.arcadePlus2Remain:Hide()
+            frame.arcadePlus3BarContainer:Hide()
+            frame.arcadePlus2BarContainer:Hide()
+            frame.arcadeTimerDivider:Hide()
+
+            -- Reloe keeps existing combined timer bar.
+            frame.timer:Hide()
+            frame.timerBarContainer:Show()
+            frame.timerBarContainer:SetHeight(16)
+            frame.timerBarFill:SetHeight(14)
+            SetFontSafe(frame.timerBar.text, "Fonts\\FRIZQT__.TTF", 13, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+            local tbr, tbg, tbb = GetColor("colorTimerBar")
+            tbFill:SetVertexColor(tbr, tbg, tbb, 0.95)
+            fbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
+            fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            frame.timerBar.text:SetTextColor(timerR, timerG, timerB)
+            frame.timerBarMark2:SetVertexColor(timerR, timerG, timerB, 1)
+            frame.timerBarMark3:SetVertexColor(timerR, timerG, timerB, 1)
+            frame.timerBarMark2:SetSize(2, 16)
+            frame.timerBarMark3:SetSize(2, 16)
+            SetFontSafe(frame.timerBarPlus2, "Fonts\\FRIZQT__.TTF", 11, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.timerBarPlus3, "Fonts\\FRIZQT__.TTF", 11, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+
+            local barInnerW = math.max(10, frame:GetWidth() - 18)
+            local barFillW = 0
+            if active and baseLimit and baseLimit > 0 then
+                barFillW = math.min(barInnerW - 2, math.max(1, math.floor((barInnerW - 2) * math.min(effElapsed, baseLimit) / baseLimit + 0.5)))
+            end
+            frame.timerBarFill:SetWidth(math.max(1, barFillW))
+            frame.timerBar.text:SetText(displayTimerText)
+            local function placeTimerMark(limit, markTex, labelFs)
+                if not (active and baseLimit and limit and limit > 0 and limit <= baseLimit) then
+                    markTex:Hide()
+                    labelFs:Hide()
+                    return
+                end
+                if effElapsed and effElapsed >= limit then
+                    markTex:Hide()
+                    labelFs:Hide()
+                    return
+                end
+                local x = math.floor((barInnerW - 2) * (limit / baseLimit) + 0.5)
+                markTex:ClearAllPoints()
+                markTex:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", 1 + x, -1)
+                markTex:Show()
+                labelFs:ClearAllPoints()
+                labelFs:SetPoint("RIGHT", markTex, "LEFT", -2, 0)
+                local rem = limit - effElapsed
+                labelFs:SetText(RGBToHex(GetColor("colorTimer")) .. FormatTime(math.abs(rem)) .. "|r")
+                labelFs:Show()
+            end
+            placeTimerMark(limit2, frame.timerBarMark2, frame.timerBarPlus2)
+            placeTimerMark(limit3, frame.timerBarMark3, frame.timerBarPlus3)
+        end
+
         frame.deathsIcon:ClearAllPoints()
-        frame.deathsIcon:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -5)
         frame.deathsIcon:SetSize(11, 11)
         frame.deaths:ClearAllPoints()
-        local topCounterTextGap = -3
-        frame.deaths:SetPoint("RIGHT", frame.deathsIcon, "LEFT", topCounterTextGap, 0)
         frame.deaths:SetText(RGBToHex(GetColor("colorDeaths")) .. tostring(deathCount or 0) .. "|r")
-        frame.deathsIcon:Show()
-        frame.deaths:Show()
+        frame.arcadeDeathsDivider:ClearAllPoints()
         frame.battleResIcon:ClearAllPoints()
-        frame.battleResIcon:SetPoint("RIGHT", frame.deaths, "LEFT", -10, 0)
         frame.battleResIcon:SetSize(11, 11)
         frame.battleRes:ClearAllPoints()
-        frame.battleRes:SetPoint("RIGHT", frame.battleResIcon, "LEFT", topCounterTextGap, 0)
+        if arcadeStyle then
+            frame.deathsIcon:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 10, 10)
+            frame.deaths:SetPoint("LEFT", frame.deathsIcon, "RIGHT", 2, 0)
+            frame.arcadeDeathPenaltyFrame:ClearAllPoints()
+            frame.arcadeDeathPenaltyFrame:SetPoint("LEFT", frame.deaths, "RIGHT", 2, 0)
+            frame.arcadeDeathPenaltyFrame:Show()
+            frame.arcadeDeathsDivider:SetPoint("LEFT", frame.arcadeDeathPenaltyFrame, "RIGHT", 8, 0)
+            frame.arcadeDeathsDivider:Show()
+            frame.battleResIcon:SetPoint("LEFT", frame.arcadeDeathsDivider, "RIGHT", 8, 0)
+            frame.battleRes:SetPoint("LEFT", frame.battleResIcon, "RIGHT", 2, 0)
+        else
+            local topCounterTextGap = -3
+            frame.deathsIcon:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -5)
+            frame.deaths:SetPoint("RIGHT", frame.deathsIcon, "LEFT", topCounterTextGap, 0)
+            frame.battleResIcon:SetPoint("RIGHT", frame.deaths, "LEFT", -10, 0)
+            frame.battleRes:SetPoint("RIGHT", frame.battleResIcon, "LEFT", topCounterTextGap, 0)
+            frame.arcadeDeathsDivider:Hide()
+            frame.arcadeDeathPenaltyFrame:Hide()
+        end
+        frame.deathsIcon:Show()
+        frame.deaths:Show()
         frame.battleRes:Show()
         frame.battleResIcon:Show()
-        local barInnerW = math.max(10, frame:GetWidth() - 18)
-        local barFillW = 0
-        if active and baseLimit and baseLimit > 0 then
-            barFillW = math.min(barInnerW - 2, math.max(1, math.floor((barInnerW - 2) * math.min(effElapsed, baseLimit) / baseLimit + 0.5)))
-        end
-        frame.timerBarFill:SetWidth(math.max(1, barFillW))
-        frame.timerBar.text:SetText(displayTimerText)
-
-        local function placeTimerMark(limit, markTex, labelFs)
-            if not (active and baseLimit and limit and limit > 0 and limit <= baseLimit) then
-                markTex:Hide()
-                labelFs:Hide()
-                return
-            end
-            if effElapsed and effElapsed >= limit then
-                markTex:Hide()
-                labelFs:Hide()
-                return
-            end
-            local x = math.floor((barInnerW - 2) * (limit / baseLimit) + 0.5)
-            markTex:ClearAllPoints()
-            markTex:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", 1 + x, -1)
-            markTex:Show()
-            labelFs:ClearAllPoints()
-            labelFs:SetPoint("RIGHT", markTex, "LEFT", -2, 0)
-            local rem = limit - effElapsed
-            labelFs:SetText(RGBToHex(GetColor("colorTimer")) .. FormatTime(math.abs(rem)) .. "|r")
-            labelFs:Show()
-        end
-        placeTimerMark(limit2, frame.timerBarMark2, frame.timerBarPlus2)
-        placeTimerMark(limit3, frame.timerBarMark3, frame.timerBarPlus3)
     else
+        arcadeUnifiedBg:Hide()
         bg:SetVertexColor(0, 0, 0, 0)
+        arcadeFrame:Hide()
+        arcadeHeaderDivider:Hide()
+        SetArcadeOuterBorderVisible(false)
+        UpdateArcadeButtonFrames(false)
+        frame.arcadeForcesTopDivider:Hide()
+        frame.arcadeForcesBottomDivider:Hide()
+        frame.arcadeForcesTitle:Hide()
+        frame.arcadeForcesValue:Hide()
+        frame.arcadeDeathsDivider:Hide()
+        frame.arcadeDeathPenaltyFrame:Hide()
+        frame.arcadeBaseTimer:Hide()
+        frame.arcadePlus3Label:Hide()
+        frame.arcadePlus2Label:Hide()
+        frame.arcadePlus3Remain:Hide()
+        frame.arcadePlus2Remain:Hide()
+        frame.arcadePlus3BarContainer:Hide()
+        frame.arcadePlus2BarContainer:Hide()
+        frame.arcadeTimerDivider:Hide()
+        frame.arcadeLevel:Hide()
+        frame.arcadeDungeon:Hide()
+        frame.title:Show()
         frame:SetWidth(280)
         local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
         frame.title:SetFont(path, 13, "")
         frame.timer:SetFont(path, 20, "")
+        frame.forcesBarContainer:SetHeight(16)
+        frame.forcesBarFill:ClearAllPoints()
+        frame.forcesBarFill:SetPoint("TOPLEFT", frame.forcesBarContainer, "TOPLEFT", 1, -1)
+        frame.forcesBarFill:SetHeight(14)
+        frame.forcesBarPullFill:SetHeight(14)
+        fbBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        fbPullFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
         fbBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
         ApplyForcesTexture()
         frame.forcesBar.text:SetFont(path, 11, "")
@@ -1794,28 +2783,46 @@ UpdateDisplay = function()
     -- Прогресс (одно значение = %, 0-100)
     local forces = GetForces()
     local useBar = (MPT.db and MPT.db.forcesBar) or secondStyle
+    local arcadeForcesTitleHex = "|cff7b88a7"
     local hexForcesPct = RGBToHex(GetColor("colorForcesPct"))
     local hexForcesPull = RGBToHex(GetColor("colorForcesPull"))
     local hexGrey = RGBToHex(GetColor("colorBossKilled"))
+    if arcadeStyle then
+        frame.arcadeForcesTitle:SetText(arcadeForcesTitleHex .. "Силы противника|r")
+    end
     if forces then
         local pctColor = forces >= 100 and hexForcesPull or hexForcesPct
         local pctEnd   = "|r"
         local baseText = string.format("%.1f%%", forces)
+        local pullText = ""
+        local pullPct = 0
         if (MPT.db and MPT.db.showForcesPullPct ~= false) and engagedForcesTotal >= 0.05 then
             local engagedCount = 0
             for _ in pairs(engagedGuids) do engagedCount = engagedCount + 1 end
-            baseText = baseText .. string.format(" %s+ %.2f%% (%d)|r", hexForcesPull, engagedForcesTotal, engagedCount)
+            pullPct = engagedForcesTotal
+            pullText = string.format(" %s+%.2f%% (%d)|r", hexForcesPull, engagedForcesTotal, engagedCount)
+            baseText = baseText .. pullText
         end
         if useBar then
-            frame.forcesBar:SetValue(math.min(forces, 100))
-            frame.forcesBar.text:SetText(pctColor .. baseText .. pctEnd)
+            frame.forcesBar:SetValue(math.min(forces, 100), pullPct)
+            if arcadeStyle then
+                frame.forcesBar.text:SetText("")
+                frame.arcadeForcesValue:SetText(pctColor .. string.format("%.1f%%", forces) .. "|r" .. pullText)
+            else
+                frame.forcesBar.text:SetText(pctColor .. baseText .. pctEnd)
+            end
         else
             frame.forces:SetText(string.format("%sУбито врагов: |r%s%s%s", pctColor, pctColor, baseText, pctEnd))
         end
     else
         if useBar then
-            frame.forcesBar:SetValue(0)
-            frame.forcesBar.text:SetText(hexGrey .. "—|r")
+            frame.forcesBar:SetValue(0, 0)
+            if arcadeStyle then
+                frame.forcesBar.text:SetText("")
+                frame.arcadeForcesValue:SetText(hexGrey .. "—|r")
+            else
+                frame.forcesBar.text:SetText(hexGrey .. "—|r")
+            end
         else
             frame.forces:SetText(string.format("%sУбито врагов: |r%s—|r", hexForcesPct, hexGrey))
         end
@@ -1826,12 +2833,24 @@ UpdateDisplay = function()
     local hexDeathsPenalty = RGBToHex(GetColor("colorDeathsPenalty"))
     if secondStyle then
         frame.deaths:SetText(hexDeaths .. tostring(deathCount or 0) .. "|r")
+        if arcadeStyle then
+            SetArcadePenaltyText(hexDeathsPenalty .. "+" .. tostring(deathLost or 0) .. "с|r")
+            frame.arcadeDeathPenaltyFrame:Show()
+            frame.arcadeDeathsDivider:Show()
+        else
+            frame.arcadeDeathPenaltyFrame:Hide()
+            frame.arcadeDeathsDivider:Hide()
+        end
     elseif deathCount > 0 then
         local deathSign = (useReverse or secondStyle) and "+" or "-"
         frame.deaths:SetText(string.format(
             "%s%d|r %s(%s%dс)|r", hexDeaths, deathCount, hexDeathsPenalty, deathSign, deathLost))
+        frame.arcadeDeathPenaltyFrame:Hide()
+        frame.arcadeDeathsDivider:Hide()
     else
         frame.deaths:SetText(hexDeaths .. "0|r")
+        frame.arcadeDeathPenaltyFrame:Hide()
+        frame.arcadeDeathsDivider:Hide()
     end
 
     -- Боевые воскрешения (иконка сердца + число) — свой цвет для цифры БР
@@ -1839,10 +2858,17 @@ UpdateDisplay = function()
     local brCount = GetBattleResCount()
     frame.battleRes:SetText(hexBattleRes .. (brCount ~= nil and tostring(brCount) or "—") .. "|r")
     if secondStyle then
-        frame.forcesBar.text:ClearAllPoints()
-        frame.forcesBar.text:SetPoint("LEFT", frame.forcesBarContainer, "LEFT", 4, 0)
-        frame.forcesBar.text:SetPoint("RIGHT", frame.forcesBarContainer, "RIGHT", -4, 0)
-        frame.forcesBar.text:SetJustifyH("LEFT")
+        if arcadeStyle then
+            frame.forcesBar.text:ClearAllPoints()
+            frame.forcesBar.text:SetPoint("LEFT", frame.forcesBarContainer, "LEFT", 4, 0)
+            frame.forcesBar.text:SetPoint("RIGHT", frame.forcesBarContainer, "RIGHT", -4, 0)
+            frame.forcesBar.text:SetJustifyH("CENTER")
+        else
+            frame.forcesBar.text:ClearAllPoints()
+            frame.forcesBar.text:SetPoint("LEFT", frame.forcesBarContainer, "LEFT", 4, 0)
+            frame.forcesBar.text:SetPoint("RIGHT", frame.forcesBarContainer, "RIGHT", -4, 0)
+            frame.forcesBar.text:SetJustifyH("LEFT")
+        end
     else
         frame.forcesBar.text:ClearAllPoints()
         frame.forcesBar.text:SetPoint("LEFT",  fbTextFrame, "LEFT",  4, 0)
@@ -1861,6 +2887,10 @@ local UpdateBossDisplay
 -- ============================================================
 local throttle = 0
 frame:SetScript("OnUpdate", function(_, elapsed)
+    if isDraggingFrame and IsArcadeStyle() then
+        -- Keep frame on physical pixel grid during drag, so 1px borders stay stable.
+        SnapFrameToPixelGrid()
+    end
     throttle = throttle + elapsed
     if throttle < 0.1 then return end
     throttle = 0
@@ -2046,6 +3076,10 @@ end
 function MPT:LoadTimerPosition()
     frame:ClearAllPoints()
     local scale = GetStyleOption("scale", 1.0)
+    if IsArcadeStyle() then
+        -- Arcade baseline: treat 0.9 as visual "1.0".
+        scale = (scale or 1) * 0.9
+    end
     frame:SetScale(scale)
     local pos
     if self.charDb then
@@ -2061,6 +3095,7 @@ function MPT:LoadTimerPosition()
     else
         frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", 250, 300)
     end
+    SnapFrameToPixelGrid()
 end
 
 -- Последний набор affix ID, переданных в RefreshAffixes.
@@ -2073,7 +3108,8 @@ lastDisplayedAffixIDs = nil
 -- affixIDs: таблица id аффиксов или nil.
 function MPT:RefreshAffixes(affixIDs)
     lastDisplayedAffixIDs = affixIDs
-    local secondStyle = IsSecondStyle()
+    local secondStyle = IsCustomStyle()
+    local arcadeStyle = IsArcadeStyle()
     local useText  = GetStyleOption("affixText", true)
     local useIcons = GetStyleOption("affixIcons", false)
     if secondStyle then
@@ -2110,15 +3146,17 @@ function MPT:RefreshAffixes(affixIDs)
 
     -- Блок иконок (скруглённые Frame+Texture)
     if useIcons then
-        local iconSize = secondStyle and 12 or AFFIX_ICON_SIZE
-        local iconGap = secondStyle and 3 or AFFIX_ICON_GAP
+        local iconSize = arcadeStyle and 16 or (secondStyle and 12 or AFFIX_ICON_SIZE)
+        local iconGap = arcadeStyle and 4 or (secondStyle and 3 or AFFIX_ICON_GAP)
         -- Скрываем все иконки из пула
         for i = 1, MAX_AFFIX_ICONS do
             frame.affixIconFrames[i]:Hide()
         end
         -- Якорь контейнера: под последней видимой текстовой строкой
         frame.affixesIcons:ClearAllPoints()
-        if secondStyle then
+        if arcadeStyle then
+            frame.affixesIcons:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -8)
+        elseif secondStyle then
             frame.affixesIcons:SetPoint("LEFT", frame.title, "RIGHT", 3, 0)
         elseif frame.affixesLine2:IsShown() then
             frame.affixesIcons:SetPoint("TOPLEFT", frame.affixesLine2, "BOTTOMLEFT",  0, -8)
@@ -2138,9 +3176,9 @@ function MPT:RefreshAffixes(affixIDs)
             local iconFrame = frame.affixIconFrames[i]
             iconFrame:ClearAllPoints()
             iconFrame:SetSize(iconSize, iconSize)
-            if iconFrame.border then
-                iconFrame.border:SetShown(not secondStyle)
-            end
+            if iconFrame.border then iconFrame.border:Hide() end
+            if iconFrame.arcadeCornerMask then iconFrame.arcadeCornerMask:Hide() end
+            if iconFrame.arcadeRoundBorder then iconFrame.arcadeRoundBorder:Hide() end
             if i == 1 then
                 iconFrame:SetPoint("TOPLEFT", frame.affixesIcons, "TOPLEFT", 0, 0)
             else
@@ -2201,7 +3239,7 @@ function MPT:RefreshCurrentAffixes()
 end
 
 function MPT:RefreshForcesMode()
-    SetForcesMode((self.db and self.db.forcesBar or false) or IsSecondStyle())
+    SetForcesMode((self.db and self.db.forcesBar or false) or IsCustomStyle())
     if frame and frame:IsShown() then
         -- В режиме превью нужна полная перерисовка (UpdateTimerLayout(true,true) + UpdateBossLayout),
         -- иначе только UpdateDisplay() даёт неверный layout и бар «уезжает» вверх.
@@ -2281,6 +3319,10 @@ function MPT:StartTimer()
                 frame.bossLines[i]:Hide()
                 frame.bossRightLines[i]:SetText("")
                 frame.bossRightLines[i]:Hide()
+                frame.bossRightKillLines[i]:SetText("")
+                frame.bossRightKillLines[i]:Hide()
+                frame.bossRightDeltaLines[i]:SetText("")
+                frame.bossRightDeltaLines[i]:Hide()
             end
         end
     end
@@ -2342,44 +3384,111 @@ end
 function MPT:ShowPreview()
     if collapsed then SetCollapsed(false) end
     self:LoadTimerPosition()
-    local secondStyle = IsSecondStyle()
+    local secondStyle = IsCustomStyle()
+    local arcadeStyle = IsArcadeStyle()
+    local arcadeFontPath = GetArcadeFontPath()
 
     if secondStyle then
-        frame:SetWidth(320)
+        frame:SetWidth(arcadeStyle and ARCADE_WIDTH or 320)
+        local arcadeFontPath = GetArcadeFontPath()
         local bgr, bgg, bgb = GetColor("colorBackground")
-        bg:SetVertexColor(bgr, bgg, bgb, 0.72)
-        frame.title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+        if arcadeStyle then
+            bg:SetVertexColor(0, 0, 0, 0)
+            arcadeFrame:Show()
+            local hr = math.min(1, bgr + 0.08)
+            local hg = math.min(1, bgg + 0.08)
+            local hb = math.min(1, bgb + 0.08)
+            SetVerticalGradientSafe(arcadeUnifiedBg, bgr, bgg, bgb, 0.94)
+            arcadeUnifiedBg:Show()
+            arcadeMiddleBg:SetVertexColor(0, 0, 0, 0)
+            arcadeHeaderBg:SetVertexColor(0, 0, 0, 0)
+            arcadeBottomBg:SetVertexColor(0, 0, 0, 0)
+            arcadeHeaderBorder:Hide()
+            arcadeMiddleBorder:Hide()
+            arcadeBottomBorder:Show()
+            arcadeBottomBorder:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+            arcadeMidBorderLeft:Hide()
+            arcadeMidBorderRight:Hide()
+            SetArcadeOuterBorderVisible(true, 0.56, 0.61, 0.70, 0.62)
+            arcadeHeaderDivider:Show()
+        else
+            arcadeUnifiedBg:Hide()
+            bg:SetVertexColor(bgr, bgg, bgb, 0.72)
+            arcadeFrame:Hide()
+            arcadeMiddleBorder:Hide()
+            arcadeBottomBorder:Hide()
+            arcadeHeaderDivider:Hide()
+            SetArcadeOuterBorderVisible(false)
+        end
+        SetFontSafe(frame.title, arcadeStyle and arcadeFontPath or "Fonts\\FRIZQT__.TTF", 14, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
         frame.title:SetWordWrap(false)
         frame.title:ClearAllPoints()
-        frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -3)
+        frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", arcadeStyle and 10 or 4, arcadeStyle and -8 or -3)
         collapseBtn:Hide()
         forfeitBtn:Show()
         pauseBtn:Show()
+        UpdateArcadeButtonFrames(arcadeStyle)
         forfeitSmall:Hide()
         pauseSmall:Hide()
         frame.timer:Hide()
         frame.plus2:Hide()
         frame.plus3:Hide()
         frame.pauseLabel:Hide()
-        frame.battleRes:Hide()
-        frame.battleResIcon:ClearAllPoints()
-        frame.battleResIcon:SetPoint("RIGHT", frame.deaths, "LEFT", -10, 0)
-        frame.battleResIcon:SetSize(11, 11)
-        frame.battleRes:ClearAllPoints()
-        local topCounterTextGap = -3
-        frame.battleRes:SetPoint("RIGHT", frame.battleResIcon, "LEFT", topCounterTextGap, 0)
         frame.battleRes:Show()
-        frame.battleResIcon:Show()
+        frame.battleResIcon:SetSize(11, 11)
+        frame.battleResIcon:ClearAllPoints()
+        frame.battleRes:ClearAllPoints()
         frame.deathsIcon:SetSize(11, 11)
         frame.deathsIcon:ClearAllPoints()
-        frame.deathsIcon:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -5)
         frame.deaths:ClearAllPoints()
-        frame.deaths:SetPoint("RIGHT", frame.deathsIcon, "LEFT", topCounterTextGap, 0)
+        frame.arcadeDeathsDivider:ClearAllPoints()
+        if arcadeStyle then
+            frame.deathsIcon:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 10, 10)
+            frame.deaths:SetPoint("LEFT", frame.deathsIcon, "RIGHT", 2, 0)
+            SetArcadePenaltyText(RGBToHex(GetColor("colorDeathsPenalty")) .. "+20с|r")
+            frame.arcadeDeathPenaltyFrame:ClearAllPoints()
+            frame.arcadeDeathPenaltyFrame:SetPoint("LEFT", frame.deaths, "RIGHT", 2, 0)
+            frame.arcadeDeathPenaltyFrame:Show()
+            frame.arcadeDeathsDivider:SetPoint("LEFT", frame.arcadeDeathPenaltyFrame, "RIGHT", 8, 0)
+            frame.arcadeDeathsDivider:Show()
+            frame.battleResIcon:SetPoint("LEFT", frame.arcadeDeathsDivider, "RIGHT", 8, 0)
+            frame.battleRes:SetPoint("LEFT", frame.battleResIcon, "RIGHT", 2, 0)
+        else
+            local topCounterTextGap = -3
+            frame.battleResIcon:SetPoint("RIGHT", frame.deaths, "LEFT", -10, 0)
+            frame.battleRes:SetPoint("RIGHT", frame.battleResIcon, "LEFT", topCounterTextGap, 0)
+            frame.deathsIcon:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -5)
+            frame.deaths:SetPoint("RIGHT", frame.deathsIcon, "LEFT", topCounterTextGap, 0)
+            frame.arcadeDeathsDivider:Hide()
+            frame.arcadeDeathPenaltyFrame:Hide()
+        end
     else
+        arcadeUnifiedBg:Hide()
         bg:SetVertexColor(0, 0, 0, 0)
+        arcadeFrame:Hide()
+        arcadeHeaderDivider:Hide()
+        SetArcadeOuterBorderVisible(false)
+        UpdateArcadeButtonFrames(false)
+        frame.arcadeBaseTimer:Hide()
+        frame.arcadePlus3Label:Hide()
+        frame.arcadePlus2Label:Hide()
+        frame.arcadePlus3Remain:Hide()
+        frame.arcadePlus2Remain:Hide()
+        frame.arcadePlus3BarContainer:Hide()
+        frame.arcadePlus2BarContainer:Hide()
+        frame.arcadeLevel:Hide()
+        frame.arcadeDungeon:Hide()
+        frame.arcadeDeathsDivider:Hide()
+        frame.arcadeDeathPenaltyFrame:Hide()
+        frame.title:Show()
         local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
         frame.title:SetFont(path, 13, "")
         frame.title:SetWordWrap(true)
+        frame.forcesBarContainer:SetHeight(16)
+        frame.forcesBarFill:ClearAllPoints()
+        frame.forcesBarFill:SetPoint("TOPLEFT", frame.forcesBarContainer, "TOPLEFT", 1, -1)
+        frame.forcesBarFill:SetHeight(14)
+        frame.forcesBarPullFill:SetHeight(14)
         frame.title:ClearAllPoints()
         frame.title:SetPoint("TOPLEFT",  frame, "TOPLEFT",  8, -6)
         frame.title:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -6)
@@ -2402,38 +3511,127 @@ function MPT:ShowPreview()
     local hexP23 = RGBToHex(GetColor("colorPlus23"))
     local hexP23Rem = RGBToHex(GetColor("colorPlus23Remaining"))
     if secondStyle then
-        frame.timer:SetText("12:44/35:00")
+        local arcadeFontPath = GetArcadeFontPath()
+        frame.timer:SetText("12:44")
         frame.timerBarContainer:Show()
-        frame.timerBar.text:SetFont("Fonts\\FRIZQT__.TTF", 13, "OUTLINE")
+        frame.timerBarContainer:SetHeight(arcadeStyle and 12 or 16)
+        frame.timerBarFill:SetHeight(arcadeStyle and 10 or 14)
+        frame.forcesBarContainer:SetHeight(arcadeStyle and 6 or 16)
+        frame.forcesBarFill:ClearAllPoints()
+        if arcadeStyle then
+            frame.forcesBarFill:SetPoint("TOPLEFT", frame.forcesBarContainer, "TOPLEFT", 0, 0)
+            frame.forcesBarFill:SetHeight(6)
+            frame.forcesBarPullFill:SetHeight(6)
+            fbBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbPullFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        else
+            frame.forcesBarFill:SetPoint("TOPLEFT", frame.forcesBarContainer, "TOPLEFT", 1, -1)
+            frame.forcesBarFill:SetHeight(14)
+            frame.forcesBarPullFill:SetHeight(14)
+            fbBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+            fbPullFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+        end
+        SetFontSafe(frame.timerBar.text, arcadeStyle and arcadeFontPath or "Fonts\\FRIZQT__.TTF", 13, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
         frame.timerBar.text:SetTextColor(tr, tg, tb)
         local tbr, tbg, tbb = GetColor("colorTimerBar")
         tbFill:SetVertexColor(tbr, tbg, tbb, 0.95)
-        fbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
+        if arcadeStyle then
+            fbBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+        else
+            fbBg:SetVertexColor(0.04, 0.04, 0.04, 0.95)
+        end
         fbFill:SetTexture("Interface\\BUTTONS\\WHITE8X8")
         ApplyForcesColor()
-        frame.forcesBar.text:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
-        frame.forcesBar.text:SetShadowOffset(1, -1)
-        frame.forcesBar.text:SetShadowColor(0, 0, 0, 1)
+        SetFontSafe(frame.forcesBar.text, arcadeStyle and arcadeFontPath or "Fonts\\FRIZQT__.TTF", 11, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        frame.forcesBar.text:SetShadowOffset(arcadeStyle and 0 or 1, arcadeStyle and 0 or -1)
+        frame.forcesBar.text:SetShadowColor(0, 0, 0, arcadeStyle and 0 or 1)
         frame.timerBarMark2:SetVertexColor(tr, tg, tb, 1)
         frame.timerBarMark3:SetVertexColor(tr, tg, tb, 1)
-        frame.timerBarPlus2:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
-        frame.timerBarPlus3:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+        frame.timerBarMark2:SetSize(arcadeStyle and 1 or 2, arcadeStyle and 12 or 16)
+        frame.timerBarMark3:SetSize(arcadeStyle and 1 or 2, arcadeStyle and 12 or 16)
+        SetFontSafe(frame.timerBarPlus2, arcadeStyle and arcadeFontPath or "Fonts\\FRIZQT__.TTF", 11, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        SetFontSafe(frame.timerBarPlus3, arcadeStyle and arcadeFontPath or "Fonts\\FRIZQT__.TTF", 11, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
+        if arcadeStyle then
+            frame.title:Hide()
+            frame.arcadeLevel:SetText(RGBToHex(GetColor("colorTitle")) .. "+15|r")
+            frame.arcadeDungeon:SetText(RGBToHex(GetColor("colorAffixes")) .. "Кузня Крови|r")
+            frame.arcadeLevel:Show()
+            frame.arcadeDungeon:Show()
+        else
+            frame.title:Show()
+            frame.arcadeLevel:Hide()
+            frame.arcadeDungeon:Hide()
+        end
         frame.timerBar.text:SetText("12:44/35:00")
         frame.timerBarFill:SetWidth(math.floor((frame:GetWidth() - 18) * 0.36))
         frame.timerBarMark2:Show()
-        frame.timerBarMark2:ClearAllPoints()
-        frame.timerBarMark2:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", math.floor((frame:GetWidth() - 18) * 0.80), -1)
-        frame.timerBarPlus2:Show()
-        frame.timerBarPlus2:SetText(RGBToHex(GetColor("colorTimer")) .. "15:16|r")
-        frame.timerBarPlus2:ClearAllPoints()
-        frame.timerBarPlus2:SetPoint("RIGHT", frame.timerBarMark2, "LEFT", -2, 0)
         frame.timerBarMark3:Show()
-        frame.timerBarMark3:ClearAllPoints()
-        frame.timerBarMark3:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", math.floor((frame:GetWidth() - 18) * 0.64), -1)
+        frame.timerBarPlus2:Show()
         frame.timerBarPlus3:Show()
-        frame.timerBarPlus3:SetText(RGBToHex(GetColor("colorTimer")) .. "9:40|r")
-        frame.timerBarPlus3:ClearAllPoints()
-        frame.timerBarPlus3:SetPoint("RIGHT", frame.timerBarMark3, "LEFT", -2, 0)
+        if arcadeStyle then
+            frame.timerBarContainer:Hide()
+            frame.timerBarMark2:Hide()
+            frame.timerBarMark3:Hide()
+            frame.timerBarPlus2:Hide()
+            frame.timerBarPlus3:Hide()
+            frame.timer:Show()
+            frame.timer:ClearAllPoints()
+            frame.timer:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -42)
+            SetFontSafe(frame.timer, arcadeFontPath, 24, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadeBaseTimer, arcadeFontPath, 12, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus3Label, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus2Label, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus3Remain, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            SetFontSafe(frame.arcadePlus2Remain, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            frame.arcadeBaseTimer:SetText("|cff7b88a7/ 35:00|r")
+            frame.arcadeBaseTimer:ClearAllPoints()
+            frame.arcadeBaseTimer:SetPoint("TOPLEFT", frame.timer, "BOTTOMLEFT", 2, -2)
+            frame.arcadeBaseTimer:Show()
+            frame.arcadeTimerDivider:Show()
+            frame.arcadeTimerDivider:SetVertexColor(0.56, 0.61, 0.70, 0.42)
+            local blockX = 98
+            local barW = 124
+            frame.arcadePlus3Label:Show()
+            frame.arcadePlus3Label:ClearAllPoints()
+            frame.arcadePlus3Label:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX, -44)
+            frame.arcadePlus3BarContainer:Show()
+            frame.arcadePlus3BarContainer:ClearAllPoints()
+            frame.arcadePlus3BarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20, -46)
+            frame.arcadePlus3BarContainer:SetWidth(barW)
+            frame.arcadePlus3BarFillFrame:SetWidth(44)
+            frame.arcadePlus3BarBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+            SetHorizontalGradientSafe(frame.arcadePlus3BarFill, 1.0, 0.90, 0.32, 0.95)
+            frame.arcadePlus3Remain:Show()
+            frame.arcadePlus3Remain:SetText("-17:44")
+            frame.arcadePlus3Remain:ClearAllPoints()
+            frame.arcadePlus3Remain:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20 + barW + 8, -44)
+            frame.arcadePlus2Label:Show()
+            frame.arcadePlus2Label:ClearAllPoints()
+            frame.arcadePlus2Label:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX, -62)
+            frame.arcadePlus2BarContainer:Show()
+            frame.arcadePlus2BarContainer:ClearAllPoints()
+            frame.arcadePlus2BarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20, -64)
+            frame.arcadePlus2BarContainer:SetWidth(barW)
+            frame.arcadePlus2BarFillFrame:SetWidth(62)
+            frame.arcadePlus2BarBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+            SetHorizontalGradientSafe(frame.arcadePlus2BarFill, 0.55, 0.68, 1.0, 0.95)
+            frame.arcadePlus2Remain:Show()
+            frame.arcadePlus2Remain:SetTextColor(0.55, 0.68, 1.0)
+            frame.arcadePlus2Remain:SetText("-12:08")
+            frame.arcadePlus2Remain:ClearAllPoints()
+            frame.arcadePlus2Remain:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20 + barW + 8, -62)
+        else
+            frame.arcadeBaseTimer:Hide()
+            frame.arcadePlus3Label:Hide()
+            frame.arcadePlus2Label:Hide()
+            frame.arcadePlus3Remain:Hide()
+            frame.arcadePlus2Remain:Hide()
+            frame.arcadePlus3BarContainer:Hide()
+            frame.arcadePlus2BarContainer:Hide()
+            frame.arcadeTimerDivider:Hide()
+        end
         frame.plus2:Hide()
         frame.plus3:Hide()
     elseif MPT.db and MPT.db.reverseTimer then
@@ -2443,6 +3641,7 @@ function MPT:ShowPreview()
         frame.plus3:SetText(string.format("%s+3 (22:24) %s9:40|r", hexP23, hexP23Rem))
     else
         frame.timerBarContainer:Hide()
+        fbBg:SetTexture("Interface\\BUTTONS\\WHITE8X8")
         fbBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
         ApplyForcesTexture()
         local path = GetFontPath(GetStyleOption("font", "Friz Quadrata (default)"))
@@ -2468,7 +3667,12 @@ function MPT:ShowPreview()
         if j == 1 then
             -- Время убийства от старта ключа; рекорд 4:01, текущий 3:41 = -0:20
             if secondStyle then
-                if showRecord then
+                if arcadeStyle then
+                    local hexNameDone = "|cff9aa7bb"
+                    local hexTimeDone = "|cff7b88a7"
+                    local hexGood = "|cff58ff96"
+                    previewTexts[j] = { left = string.format("%s%s|r", hexNameDone, bossName), kill = string.format("%s2:03|r", hexTimeDone), delta = string.format("%s-0:20|r", hexGood) }
+                elseif showRecord then
                     previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s-0:20  3:41|r", hexBossKilled) }
                 else
                     previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s3:41|r", hexBossKilled) }
@@ -2480,7 +3684,12 @@ function MPT:ShowPreview()
             end
         elseif j == 2 then
             if secondStyle then
-                if showRecord then
+                if arcadeStyle then
+                    local hexNameDone = "|cff9aa7bb"
+                    local hexTimeDone = "|cff7b88a7"
+                    local hexBad = "|cffff6a6a"
+                    previewTexts[j] = { left = string.format("%s%s|r", hexNameDone, bossName), kill = string.format("%s4:51|r", hexTimeDone), delta = string.format("%s+0:07|r", hexBad) }
+                elseif showRecord then
                     local hexBad = RGBToHex(GetColor("colorTimerFailed"))
                     previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s+0:07  7:22|r", hexBad) }
                 else
@@ -2493,7 +3702,11 @@ function MPT:ShowPreview()
             end
         else
             if secondStyle then
-                previewTexts[j] = { left = string.format("%s%s|r", hexBossPending, bossName), right = "" }
+                if arcadeStyle then
+                    previewTexts[j] = { left = string.format("|cffffffff%s|r", bossName), kill = "|cff7b88a7--|r", delta = "|cff7b88a7--|r" }
+                else
+                    previewTexts[j] = { left = string.format("%s%s|r", hexBossPending, bossName), right = "" }
+                end
             else
                 previewTexts[j] = string.format("%s[ ] %s|r", hexBossPending, bossName)
             end
@@ -2503,13 +3716,31 @@ function MPT:ShowPreview()
     for i = 1, previewCount do
         local fs = frame.bossLines[i]
         if secondStyle then
-            fs:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+            if arcadeStyle then
+                SetFontSafe(fs, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+                SetFontSafe(frame.bossRightKillLines[i], arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+                SetFontSafe(frame.bossRightDeltaLines[i], arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+            else
+                fs:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+            end
             fs:SetText(previewTexts[i].left)
-            frame.bossRightLines[i]:SetText(previewTexts[i].right)
-            frame.bossRightLines[i]:Show()
+            if arcadeStyle then
+                frame.bossRightLines[i]:Hide()
+                frame.bossRightKillLines[i]:SetText(previewTexts[i].kill or "|cff7b88a7--|r")
+                frame.bossRightDeltaLines[i]:SetText(previewTexts[i].delta or "|cff7b88a7--|r")
+                frame.bossRightKillLines[i]:Show()
+                frame.bossRightDeltaLines[i]:Show()
+            else
+                frame.bossRightLines[i]:SetText(previewTexts[i].right)
+                frame.bossRightLines[i]:Show()
+                frame.bossRightKillLines[i]:Hide()
+                frame.bossRightDeltaLines[i]:Hide()
+            end
         else
             fs:SetText(previewTexts[i])
             frame.bossRightLines[i]:Hide()
+            frame.bossRightKillLines[i]:Hide()
+            frame.bossRightDeltaLines[i]:Hide()
         end
         local h = fs:GetStringHeight() or 0
         frame.bossLineH[i] = (h > BOSS_LINE_H1 + 2) and BOSS_LINE_H2 or BOSS_LINE_H1
@@ -2518,11 +3749,43 @@ function MPT:ShowPreview()
     for i = previewCount + 1, MAX_BOSSES do
         frame.bossLines[i]:Hide()
         frame.bossRightLines[i]:Hide()
+        frame.bossRightKillLines[i]:Hide()
+        frame.bossRightDeltaLines[i]:Hide()
     end
     local previewBossTopY = secondStyle and 0 or UpdateTimerLayout(true, true)
     local useForcesBar = secondStyle or (MPT.db and MPT.db.forcesBar)
     SetForcesMode(useForcesBar)
     UpdateBossLayout(previewCount, previewBossTopY)
+    if arcadeStyle then
+        for i = 1, MAX_BOSSES do
+            local rowBg = frame.bossRowBgs[i]
+            if rowBg and i <= previewCount then
+                if i == 3 then
+                    rowBg:SetVertexColor(0.42, 0.54, 0.78, 0.16)
+                    rowBg:Show()
+                else
+                    rowBg:Hide()
+                end
+            elseif rowBg then
+                rowBg:Hide()
+            end
+            local iconTex = frame.bossStatusIcons[i]
+            if iconTex and i <= previewCount then
+                if i <= 2 then
+                    iconTex:SetVertexColor(0.62, 1.00, 0.70, 1)
+                else
+                    iconTex:SetVertexColor(0.62, 0.80, 1.00, 1)
+                end
+                iconTex:Show()
+            elseif iconTex then
+                iconTex:Hide()
+            end
+        end
+    else
+        for i = 1, MAX_BOSSES do
+            if frame.bossStatusIcons[i] then frame.bossStatusIcons[i]:Hide() end
+        end
+    end
 
     local showPullPct = MPT.db and MPT.db.showForcesPullPct ~= false
     local hexFPct = RGBToHex(GetColor("colorForcesPct"))
@@ -2531,13 +3794,19 @@ function MPT:ShowPreview()
     local hexDPen = RGBToHex(GetColor("colorDeathsPenalty"))
     local forcesPreviewText = showPullPct and string.format("%s70.0%%|r %s+ 5.40%% (7)|r", hexFPct, hexFPull) or (hexFPct .. "70.0%|r")
     if useForcesBar then
-        frame.forcesBar:SetValue(70)
-        frame.forcesBar.text:SetText(forcesPreviewText)
+        frame.forcesBar:SetValue(70, showPullPct and 5.40 or 0)
+        if arcadeStyle then
+            frame.arcadeForcesTitle:SetText("|cff7b88a7Силы противника|r")
+            frame.arcadeForcesValue:SetText(showPullPct and string.format("%s70.0%%|r %s+5.40%% (7)|r", hexFPct, hexFPull) or string.format("%s70.0%%|r", hexFPct))
+            frame.forcesBar.text:SetText("")
+        else
+            frame.forcesBar.text:SetText(forcesPreviewText)
+        end
         if secondStyle then
             frame.forcesBar.text:ClearAllPoints()
             frame.forcesBar.text:SetPoint("LEFT", frame.forcesBarContainer, "LEFT", 4, 0)
             frame.forcesBar.text:SetPoint("RIGHT", frame.forcesBarContainer, "RIGHT", -4, 0)
-            frame.forcesBar.text:SetJustifyH("LEFT")
+            frame.forcesBar.text:SetJustifyH(arcadeStyle and "CENTER" or "LEFT")
         end
     else
         local textPreview = showPullPct and string.format("%sУбито врагов: |r%s70.0%%|r %s+5.40%% (7)|r", hexFPct, hexFPct, hexFPull) or string.format("%sУбито врагов: |r%s70.0%%|r", hexFPct, hexFPct)
@@ -2617,43 +3886,74 @@ end
 
 UpdateBossDisplay = function()
     if not state.bosses or #state.bosses == 0 then return end
-    local secondStyle = IsSecondStyle()
+    local secondStyle = IsCustomStyle()
+    local arcadeStyle = IsArcadeStyle()
     local hexKilled = RGBToHex(GetColor("colorBossKilled"))
     local hexPending = RGBToHex(GetColor("colorBossPending"))
     local hexFailed = RGBToHex(GetColor("colorTimerFailed"))
+    local arcadeFontPath = arcadeStyle and GetArcadeFontPath() or "Fonts\\FRIZQT__.TTF"
     local count = math.min(#state.bosses, MAX_BOSSES)
     for i = 1, count do
         frame.bossLines[i]:Show()
         if secondStyle then
-            frame.bossRightLines[i]:Show()
+            if arcadeStyle then
+                frame.bossRightLines[i]:Hide()
+                frame.bossRightKillLines[i]:Show()
+                frame.bossRightDeltaLines[i]:Show()
+                frame.bossStatusIcons[i]:Show()
+            else
+                frame.bossRightLines[i]:Show()
+                frame.bossRightKillLines[i]:Hide()
+                frame.bossRightDeltaLines[i]:Hide()
+                frame.bossStatusIcons[i]:Hide()
+            end
         else
             frame.bossRightLines[i]:Hide()
+            frame.bossRightKillLines[i]:Hide()
+            frame.bossRightDeltaLines[i]:Hide()
+            frame.bossStatusIcons[i]:Hide()
         end
     end
     for i = count + 1, MAX_BOSSES do
         frame.bossLines[i]:Hide()
         frame.bossRightLines[i]:Hide()
+        frame.bossRightKillLines[i]:Hide()
+        frame.bossRightDeltaLines[i]:Hide()
+        frame.bossStatusIcons[i]:Hide()
     end
     for i = 1, count do
         local boss = state.bosses[i]
         local line
         local rightText = ""
+        local rightKillText = ""
+        local rightDeltaText = ""
+        local showRecord = true
+        if MPT.db and MPT.db.showBossRecord ~= nil then
+            showRecord = not not MPT.db.showBossRecord
+        end
+        local rec = GetBossRecord(boss.name)
         if boss.killed then
             local kt = boss.killTime
             if kt then
                 local ktStr = FormatTime(kt)
-                local rec   = GetBossRecord(boss.name)
-                local showRecord = true
-                if MPT.db and MPT.db.showBossRecord ~= nil then
-                    showRecord = not not MPT.db.showBossRecord
-                end
                 if rec and rec.kt and showRecord then
                     if secondStyle then
-                        local delta = FormatDelta(kt, rec.kt)
-                        local isSlower = (kt - rec.kt) > 0
-                        local rightColor = isSlower and hexFailed or hexKilled
-                        line = string.format("%s%s|r", hexKilled, boss.name)
-                        rightText = string.format("%s%s|r %s%s|r", rightColor, delta, rightColor, ktStr)
+                        if arcadeStyle then
+                            local delta = FormatDelta(kt, rec.kt)
+                            local isSlower = (kt - rec.kt) > 0
+                            local hexNameDone = "|cff9aa7bb"
+                            local hexTimeDone = "|cff7b88a7"
+                            local hexDelta = isSlower and "|cffff6a6a" or "|cff58ff96"
+                            line = string.format("%s%s|r", hexNameDone, boss.name)
+                            rightKillText = string.format("%s%s|r", hexTimeDone, ktStr)
+                            rightDeltaText = string.format("%s%s|r", hexDelta, delta)
+                        else
+                            local delta = FormatDelta(kt, rec.kt)
+                            local isSlower = (kt - rec.kt) > 0
+                            local rightColor = isSlower and hexFailed or hexKilled
+                            line = string.format("%s%s|r", hexKilled, boss.name)
+                            rightText = string.format("%s%s|r %s%s|r", rightColor, delta, rightColor, ktStr)
+                        end
                     else
                         local delta = FormatDelta(kt, rec.kt)
                         line = string.format("%s[+] %s  %s (Рекорд %s, %s)|r",
@@ -2661,33 +3961,48 @@ UpdateBossDisplay = function()
                     end
                 else
                     if secondStyle then
-                        line = string.format("%s%s|r", hexKilled, boss.name)
-                        -- showBossRecord=false: keep only kill time, always green
-                        rightText = string.format("%s%s|r", hexKilled, ktStr)
+                        if arcadeStyle then
+                            local hexNameDone = "|cff9aa7bb"
+                            local hexTimeDone = "|cff7b88a7"
+                            line = string.format("%s%s|r", hexNameDone, boss.name)
+                            rightKillText = string.format("%s%s|r", hexTimeDone, ktStr)
+                            rightDeltaText = "|cff7b88a7--|r"
+                        else
+                            line = string.format("%s%s|r", hexKilled, boss.name)
+                            -- showBossRecord=false: keep only kill time, always green
+                            rightText = string.format("%s%s|r", hexKilled, ktStr)
+                        end
                     else
                         line = string.format("%s[+] %s  %s|r", hexKilled, boss.name, ktStr)
                     end
                 end
             else
                 if secondStyle then
-                    line = string.format("%s%s|r", hexKilled, boss.name)
-                    rightText = hexKilled .. "—|r"
+                    if arcadeStyle then
+                        line = string.format("|cff9aa7bb%s|r", boss.name)
+                        rightKillText = "|cff7b88a7--|r"
+                        rightDeltaText = "|cff7b88a7--|r"
+                    else
+                        line = string.format("%s%s|r", hexKilled, boss.name)
+                        rightText = hexKilled .. "—|r"
+                    end
                 else
                     line = string.format("%s[+] %s|r", hexKilled, boss.name)
                 end
             end
         else
             if secondStyle then
-                line = string.format("%s%s|r", hexPending, boss.name)
-                local showRecord = true
-                if MPT.db and MPT.db.showBossRecord ~= nil then
-                    showRecord = not not MPT.db.showBossRecord
-                end
-                local rec = GetBossRecord(boss.name)
-                if showRecord and rec and rec.kt then
-                    rightText = hexPending .. FormatTime(rec.kt) .. "|r"
+                if arcadeStyle then
+                    line = string.format("|cffffffff%s|r", boss.name)
+                    rightKillText = "|cff7b88a7--|r"
+                    rightDeltaText = "|cff7b88a7--|r"
                 else
-                    rightText = ""
+                    line = string.format("%s%s|r", hexPending, boss.name)
+                    if showRecord and rec and rec.kt then
+                        rightText = hexPending .. FormatTime(rec.kt) .. "|r"
+                    else
+                        rightText = ""
+                    end
                 end
             else
                 line = string.format("%s[ ] %s|r", hexPending, boss.name)
@@ -2695,12 +4010,34 @@ UpdateBossDisplay = function()
         end
         local fs = frame.bossLines[i]
         if secondStyle then
-            fs:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+            SetFontSafe(fs, arcadeFontPath, arcadeStyle and 11 or 12, arcadeStyle and "" or "OUTLINE", "Fonts\\FRIZQT__.TTF")
         end
         fs:SetText(line)
         if secondStyle then
-            frame.bossRightLines[i]:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
-            frame.bossRightLines[i]:SetText(rightText)
+            if arcadeStyle then
+                frame.bossRightLines[i]:Hide()
+                SetFontSafe(frame.bossRightKillLines[i], arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+                SetFontSafe(frame.bossRightDeltaLines[i], arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
+                frame.bossRightKillLines[i]:SetText(rightKillText)
+                frame.bossRightDeltaLines[i]:SetText(rightDeltaText)
+                frame.bossRightKillLines[i]:Show()
+                frame.bossRightDeltaLines[i]:Show()
+                if frame.bossStatusIcons[i] then
+                    if boss.killed then
+                        frame.bossStatusIcons[i]:SetVertexColor(0.62, 1.00, 0.70, 1)
+                    else
+                        frame.bossStatusIcons[i]:SetVertexColor(0.62, 0.80, 1.00, 1)
+                    end
+                    frame.bossStatusIcons[i]:Show()
+                end
+            else
+                SetFontSafe(frame.bossRightLines[i], arcadeFontPath, 12, "OUTLINE", "Fonts\\FRIZQT__.TTF")
+                frame.bossRightLines[i]:SetText(rightText)
+                frame.bossRightLines[i]:Show()
+                frame.bossRightKillLines[i]:Hide()
+                frame.bossRightDeltaLines[i]:Hide()
+                if frame.bossStatusIcons[i] then frame.bossStatusIcons[i]:Hide() end
+            end
         end
         local h = fs:GetStringHeight() or 0
         frame.bossLineH[i] = (h > BOSS_LINE_H1 + 2) and BOSS_LINE_H2 or BOSS_LINE_H1

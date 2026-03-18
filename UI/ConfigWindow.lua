@@ -654,6 +654,7 @@ local function BuildColorsSection()
         end
         frame.resetBtn:ClearAllPoints()
         frame.resetBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, resetY)
+        frame.resetBtn:SetShown(#schema > 0)
         frame.contentHeight = math.max(360, (-resetY) + 50)
         frame:SetHeight(frame.contentHeight)
         if activeSection == "colors" then
