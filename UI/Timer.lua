@@ -1191,13 +1191,18 @@ frame.forcesBar.SetValue = function(_, pct, pullPct)
     local basePct = math.max(0, math.min(pct or 0, 100))
     local fillW = math.max(1, math.floor(innerW * basePct / 100 + 0.5))
     frame.forcesBarFill:SetWidth(fillW)
-    local pull = math.max(0, pullPct or 0)
-    local maxPull = math.max(0, 100 - basePct)
-    local shownPullPct = math.min(pull, maxPull)
-    local pullW = math.floor(innerW * shownPullPct / 100 + 0.5)
-    if pullW > 0 then
-        frame.forcesBarPullFill:SetWidth(pullW)
-        frame.forcesBarPullFill:Show()
+    if arcadeStyle then
+        local pull = math.max(0, pullPct or 0)
+        local maxPull = math.max(0, 100 - basePct)
+        local shownPullPct = math.min(pull, maxPull)
+        local pullW = math.floor(innerW * shownPullPct / 100 + 0.5)
+        if pullW > 0 then
+            frame.forcesBarPullFill:SetWidth(pullW)
+            frame.forcesBarPullFill:Show()
+        else
+            frame.forcesBarPullFill:SetWidth(0)
+            frame.forcesBarPullFill:Hide()
+        end
     else
         frame.forcesBarPullFill:SetWidth(0)
         frame.forcesBarPullFill:Hide()
@@ -1927,11 +1932,19 @@ local function UpdateBossLayout(count, bossTopY)
         local timerBarTop = IsArcadeStyle() and -56 or -24
         local bossTop = timerBarTop - (IsArcadeStyle() and 40 or 23)
         local arcadeStyle = IsArcadeStyle()
+        local showRecord = true
+        if MPT.db and MPT.db.showBossRecord ~= nil then
+            showRecord = not not MPT.db.showBossRecord
+        end
         local rightW = 118
         local leftW = math.max(110, frame:GetWidth() - rightW - 18)
         local killW, deltaW, colGap = 46, 40, 8
         if arcadeStyle then
-            leftW = math.max(110, frame:GetWidth() - (killW + deltaW + colGap) - 20)
+            if showRecord then
+                leftW = math.max(110, frame:GetWidth() - (killW + deltaW + colGap) - 20)
+            else
+                leftW = math.max(110, frame:GetWidth() - killW - 20)
+            end
         end
 
         frame.timerBarContainer:ClearAllPoints()
@@ -1986,12 +1999,17 @@ local function UpdateBossLayout(count, bossTopY)
                 right:Hide()
                 local rightDelta = frame.bossRightDeltaLines[i]
                 local rightKill = frame.bossRightKillLines[i]
-                rightDelta:ClearAllPoints()
-                rightDelta:SetPoint("RIGHT", rowBg, "RIGHT", -10, 0)
-                rightDelta:SetWidth(deltaW)
-                rightDelta:Show()
                 rightKill:ClearAllPoints()
-                rightKill:SetPoint("RIGHT", rightDelta, "LEFT", -colGap, 0)
+                if showRecord then
+                    rightDelta:ClearAllPoints()
+                    rightDelta:SetPoint("RIGHT", rowBg, "RIGHT", -10, 0)
+                    rightDelta:SetWidth(deltaW)
+                    rightDelta:Show()
+                    rightKill:SetPoint("RIGHT", rightDelta, "LEFT", -colGap, 0)
+                else
+                    rightDelta:Hide()
+                    rightKill:SetPoint("RIGHT", rowBg, "RIGHT", -10, 0)
+                end
                 rightKill:SetWidth(killW)
                 rightKill:Show()
                 left:SetPoint("LEFT", iconTex, "RIGHT", 6, 0)
@@ -2206,6 +2224,14 @@ local function UpdateTimerLayout(showPlus2, showPlus3)
     -- Если аргументы не переданы — читаем текущее состояние
     if showPlus2 == nil then showPlus2 = frame.plus2:IsShown() and true or false end
     if showPlus3 == nil then showPlus3 = frame.plus3:IsShown() and true or false end
+
+    -- Reloe/Arcade layout is handled in style-specific branches.
+    -- Do not overwrite timer anchors here, otherwise Arcade timer jumps up after reload.
+    if IsCustomStyle() then
+        frame.plus2:Hide()
+        frame.plus3:Hide()
+        return 0
+    end
 
     -- affixes на -24; высота зависит от контента
     local affixBottom = -24
@@ -2477,7 +2503,7 @@ UpdateDisplay = function()
             -- Left: main timer and base time below.
             frame.timer:Show()
             frame.timer:ClearAllPoints()
-            frame.timer:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -42)
+            frame.timer:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -40)
             frame.timer:SetTextColor(timerR, timerG, timerB)
             SetFontSafe(frame.timer, arcadeFontPath, 24, "", "Fonts\\FRIZQT__.TTF")
             SetFontSafe(frame.arcadeBaseTimer, arcadeFontPath, 12, "", "Fonts\\FRIZQT__.TTF")
@@ -2531,11 +2557,13 @@ UpdateDisplay = function()
 
                 remainFs:ClearAllPoints()
                 remainFs:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20 + barW + 8, y)
-                remainFs:SetTextColor(labelColorR, labelColorG, labelColorB)
                 local remain = (limit - effElapsed)
                 if remain >= 0 then
+                    remainFs:SetTextColor(labelColorR, labelColorG, labelColorB)
                     remainFs:SetText("-" .. FormatTime(remain))
                 else
+                    local fr, fg, fb = GetColor("colorTimerFailed")
+                    remainFs:SetTextColor(fr, fg, fb)
                     remainFs:SetText("+" .. FormatTime(-remain))
                 end
                 remainFs:Show()
@@ -2602,7 +2630,7 @@ UpdateDisplay = function()
                 labelFs:ClearAllPoints()
                 labelFs:SetPoint("RIGHT", markTex, "LEFT", -2, 0)
                 local rem = limit - effElapsed
-                labelFs:SetText(RGBToHex(GetColor("colorTimer")) .. FormatTime(math.abs(rem)) .. "|r")
+                labelFs:SetText(RGBToHex(GetColor("colorTimer")) .. "-" .. FormatTime(rem) .. "|r")
                 labelFs:Show()
             end
             placeTimerMark(limit2, frame.timerBarMark2, frame.timerBarPlus2)
@@ -2804,7 +2832,7 @@ UpdateDisplay = function()
             baseText = baseText .. pullText
         end
         if useBar then
-            frame.forcesBar:SetValue(math.min(forces, 100), pullPct)
+            frame.forcesBar:SetValue(math.min(forces, 100), arcadeStyle and pullPct or 0)
             if arcadeStyle then
                 frame.forcesBar.text:SetText("")
                 frame.arcadeForcesValue:SetText(pctColor .. string.format("%.1f%%", forces) .. "|r" .. pullText)
@@ -2834,9 +2862,21 @@ UpdateDisplay = function()
     if secondStyle then
         frame.deaths:SetText(hexDeaths .. tostring(deathCount or 0) .. "|r")
         if arcadeStyle then
-            SetArcadePenaltyText(hexDeathsPenalty .. "+" .. tostring(deathLost or 0) .. "с|r")
-            frame.arcadeDeathPenaltyFrame:Show()
-            frame.arcadeDeathsDivider:Show()
+            local lost = tonumber(deathLost) or 0
+            if lost > 0 then
+                SetArcadePenaltyText(hexDeathsPenalty .. "+" .. tostring(lost) .. "с|r")
+                frame.arcadeDeathPenaltyFrame:Show()
+                frame.arcadeDeathsDivider:SetPoint("LEFT", frame.arcadeDeathPenaltyFrame, "RIGHT", 8, 0)
+                frame.arcadeDeathsDivider:Show()
+                frame.battleResIcon:SetPoint("LEFT", frame.arcadeDeathsDivider, "RIGHT", 8, 0)
+                frame.battleRes:SetPoint("LEFT", frame.battleResIcon, "RIGHT", 2, 0)
+            else
+                frame.arcadeDeathPenaltyFrame:Hide()
+                frame.arcadeDeathsDivider:SetPoint("LEFT", frame.deaths, "RIGHT", 8, 0)
+                frame.arcadeDeathsDivider:Show()
+                frame.battleResIcon:SetPoint("LEFT", frame.arcadeDeathsDivider, "RIGHT", 8, 0)
+                frame.battleRes:SetPoint("LEFT", frame.battleResIcon, "RIGHT", 2, 0)
+            end
         else
             frame.arcadeDeathPenaltyFrame:Hide()
             frame.arcadeDeathsDivider:Hide()
@@ -3566,10 +3606,33 @@ function MPT:ShowPreview()
         end
         frame.timerBar.text:SetText("12:44/35:00")
         frame.timerBarFill:SetWidth(math.floor((frame:GetWidth() - 18) * 0.36))
-        frame.timerBarMark2:Show()
-        frame.timerBarMark3:Show()
-        frame.timerBarPlus2:Show()
-        frame.timerBarPlus3:Show()
+        local previewElapsed = (12 * 60) + 44
+        local previewBase = 35 * 60
+        local previewLimit2 = math.floor(previewBase * 0.80 + 0.5)
+        local previewLimit3 = math.floor(previewBase * 0.64 + 0.5)
+        local barInnerW = math.max(10, frame:GetWidth() - 18)
+        local function placePreviewTimerMark(limit, markTex, labelFs)
+            if not (limit and limit > 0 and limit <= previewBase) then
+                markTex:Hide()
+                labelFs:Hide()
+                return
+            end
+            if previewElapsed >= limit then
+                markTex:Hide()
+                labelFs:Hide()
+                return
+            end
+            local x = math.floor((barInnerW - 2) * (limit / previewBase) + 0.5)
+            markTex:ClearAllPoints()
+            markTex:SetPoint("TOPLEFT", frame.timerBarContainer, "TOPLEFT", 1 + x, -1)
+            markTex:Show()
+            labelFs:ClearAllPoints()
+            labelFs:SetPoint("RIGHT", markTex, "LEFT", -2, 0)
+            labelFs:SetText(RGBToHex(GetColor("colorTimer")) .. "-" .. FormatTime(limit - previewElapsed) .. "|r")
+            labelFs:Show()
+        end
+        placePreviewTimerMark(previewLimit2, frame.timerBarMark2, frame.timerBarPlus2)
+        placePreviewTimerMark(previewLimit3, frame.timerBarMark3, frame.timerBarPlus3)
         if arcadeStyle then
             frame.timerBarContainer:Hide()
             frame.timerBarMark2:Hide()
@@ -3578,7 +3641,7 @@ function MPT:ShowPreview()
             frame.timerBarPlus3:Hide()
             frame.timer:Show()
             frame.timer:ClearAllPoints()
-            frame.timer:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -42)
+            frame.timer:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -40)
             SetFontSafe(frame.timer, arcadeFontPath, 24, "", "Fonts\\FRIZQT__.TTF")
             SetFontSafe(frame.arcadeBaseTimer, arcadeFontPath, 12, "", "Fonts\\FRIZQT__.TTF")
             SetFontSafe(frame.arcadePlus3Label, arcadeFontPath, 11, "", "Fonts\\FRIZQT__.TTF")
@@ -3593,35 +3656,47 @@ function MPT:ShowPreview()
             frame.arcadeTimerDivider:SetVertexColor(0.56, 0.61, 0.70, 0.42)
             local blockX = 98
             local barW = 124
-            frame.arcadePlus3Label:Show()
-            frame.arcadePlus3Label:ClearAllPoints()
-            frame.arcadePlus3Label:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX, -44)
-            frame.arcadePlus3BarContainer:Show()
-            frame.arcadePlus3BarContainer:ClearAllPoints()
-            frame.arcadePlus3BarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20, -46)
-            frame.arcadePlus3BarContainer:SetWidth(barW)
-            frame.arcadePlus3BarFillFrame:SetWidth(44)
-            frame.arcadePlus3BarBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
-            SetHorizontalGradientSafe(frame.arcadePlus3BarFill, 1.0, 0.90, 0.32, 0.95)
-            frame.arcadePlus3Remain:Show()
-            frame.arcadePlus3Remain:SetText("-17:44")
-            frame.arcadePlus3Remain:ClearAllPoints()
-            frame.arcadePlus3Remain:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20 + barW + 8, -44)
-            frame.arcadePlus2Label:Show()
-            frame.arcadePlus2Label:ClearAllPoints()
-            frame.arcadePlus2Label:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX, -62)
-            frame.arcadePlus2BarContainer:Show()
-            frame.arcadePlus2BarContainer:ClearAllPoints()
-            frame.arcadePlus2BarContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20, -64)
-            frame.arcadePlus2BarContainer:SetWidth(barW)
-            frame.arcadePlus2BarFillFrame:SetWidth(62)
-            frame.arcadePlus2BarBg:SetVertexColor(0.20, 0.27, 0.40, 0.95)
-            SetHorizontalGradientSafe(frame.arcadePlus2BarFill, 0.55, 0.68, 1.0, 0.95)
-            frame.arcadePlus2Remain:Show()
-            frame.arcadePlus2Remain:SetTextColor(0.55, 0.68, 1.0)
-            frame.arcadePlus2Remain:SetText("-12:08")
-            frame.arcadePlus2Remain:ClearAllPoints()
-            frame.arcadePlus2Remain:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20 + barW + 8, -62)
+            local previewElapsed = (12 * 60) + 44
+            local previewBase = 35 * 60
+            local previewLimit3 = math.floor(previewBase * 0.64 + 0.5)
+            local previewLimit2 = math.floor(previewBase * 0.80 + 0.5)
+            local rowTop = -44
+            local rowGap = 18
+            local function placeArcadePreviewRow(rowIndex, limit, labelFs, barContainer, barBgTex, fillFrame, fillTex, remainFs, labelColorR, labelColorG, labelColorB, fillR, fillG, fillB)
+                if not (limit and limit > 0) then
+                    labelFs:Hide()
+                    barContainer:Hide()
+                    remainFs:Hide()
+                    return
+                end
+                local y = rowTop - ((rowIndex - 1) * rowGap)
+                labelFs:Show()
+                labelFs:ClearAllPoints()
+                labelFs:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX, y)
+                labelFs:SetTextColor(labelColorR, labelColorG, labelColorB)
+                barContainer:Show()
+                barContainer:ClearAllPoints()
+                barContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20, y - 2)
+                barContainer:SetWidth(barW)
+                barBgTex:SetVertexColor(0.20, 0.27, 0.40, 0.95)
+                SetHorizontalGradientSafe(fillTex, fillR, fillG, fillB, 0.95)
+                local pct = math.max(0, math.min(1, previewElapsed / limit))
+                fillFrame:SetWidth(math.max(1, math.floor(barW * pct + 0.5)))
+                remainFs:Show()
+                remainFs:ClearAllPoints()
+                remainFs:SetPoint("TOPLEFT", frame, "TOPLEFT", blockX + 20 + barW + 8, y)
+                local remain = limit - previewElapsed
+                if remain >= 0 then
+                    remainFs:SetTextColor(labelColorR, labelColorG, labelColorB)
+                    remainFs:SetText("-" .. FormatTime(remain))
+                else
+                    local fr, fg, fb = GetColor("colorTimerFailed")
+                    remainFs:SetTextColor(fr, fg, fb)
+                    remainFs:SetText("+" .. FormatTime(-remain))
+                end
+            end
+            placeArcadePreviewRow(1, previewLimit3, frame.arcadePlus3Label, frame.arcadePlus3BarContainer, frame.arcadePlus3BarBg, frame.arcadePlus3BarFillFrame, frame.arcadePlus3BarFill, frame.arcadePlus3Remain, 1.0, 0.90, 0.32, 1.0, 0.90, 0.32)
+            placeArcadePreviewRow(2, previewLimit2, frame.arcadePlus2Label, frame.arcadePlus2BarContainer, frame.arcadePlus2BarBg, frame.arcadePlus2BarFillFrame, frame.arcadePlus2BarFill, frame.arcadePlus2Remain, 0.55, 0.68, 1.0, 0.55, 0.68, 1.0)
         else
             frame.arcadeBaseTimer:Hide()
             frame.arcadePlus3Label:Hide()
@@ -3729,7 +3804,7 @@ function MPT:ShowPreview()
                 frame.bossRightKillLines[i]:SetText(previewTexts[i].kill or "|cff7b88a7--|r")
                 frame.bossRightDeltaLines[i]:SetText(previewTexts[i].delta or "|cff7b88a7--|r")
                 frame.bossRightKillLines[i]:Show()
-                frame.bossRightDeltaLines[i]:Show()
+                frame.bossRightDeltaLines[i]:SetShown(showRecord)
             else
                 frame.bossRightLines[i]:SetText(previewTexts[i].right)
                 frame.bossRightLines[i]:Show()
@@ -3794,7 +3869,7 @@ function MPT:ShowPreview()
     local hexDPen = RGBToHex(GetColor("colorDeathsPenalty"))
     local forcesPreviewText = showPullPct and string.format("%s70.0%%|r %s+ 5.40%% (7)|r", hexFPct, hexFPull) or (hexFPct .. "70.0%|r")
     if useForcesBar then
-        frame.forcesBar:SetValue(70, showPullPct and 5.40 or 0)
+        frame.forcesBar:SetValue(70, arcadeStyle and showPullPct and 5.40 or 0)
         if arcadeStyle then
             frame.arcadeForcesTitle:SetText("|cff7b88a7Силы противника|r")
             frame.arcadeForcesValue:SetText(showPullPct and string.format("%s70.0%%|r %s+5.40%% (7)|r", hexFPct, hexFPull) or string.format("%s70.0%%|r", hexFPct))
@@ -3888,6 +3963,10 @@ UpdateBossDisplay = function()
     if not state.bosses or #state.bosses == 0 then return end
     local secondStyle = IsCustomStyle()
     local arcadeStyle = IsArcadeStyle()
+    local showRecord = true
+    if MPT.db and MPT.db.showBossRecord ~= nil then
+        showRecord = not not MPT.db.showBossRecord
+    end
     local hexKilled = RGBToHex(GetColor("colorBossKilled"))
     local hexPending = RGBToHex(GetColor("colorBossPending"))
     local hexFailed = RGBToHex(GetColor("colorTimerFailed"))
@@ -3899,7 +3978,7 @@ UpdateBossDisplay = function()
             if arcadeStyle then
                 frame.bossRightLines[i]:Hide()
                 frame.bossRightKillLines[i]:Show()
-                frame.bossRightDeltaLines[i]:Show()
+                frame.bossRightDeltaLines[i]:SetShown(showRecord)
                 frame.bossStatusIcons[i]:Show()
             else
                 frame.bossRightLines[i]:Show()
@@ -3927,10 +4006,6 @@ UpdateBossDisplay = function()
         local rightText = ""
         local rightKillText = ""
         local rightDeltaText = ""
-        local showRecord = true
-        if MPT.db and MPT.db.showBossRecord ~= nil then
-            showRecord = not not MPT.db.showBossRecord
-        end
         local rec = GetBossRecord(boss.name)
         if boss.killed then
             local kt = boss.killTime
@@ -4021,7 +4096,7 @@ UpdateBossDisplay = function()
                 frame.bossRightKillLines[i]:SetText(rightKillText)
                 frame.bossRightDeltaLines[i]:SetText(rightDeltaText)
                 frame.bossRightKillLines[i]:Show()
-                frame.bossRightDeltaLines[i]:Show()
+                frame.bossRightDeltaLines[i]:SetShown(showRecord)
                 if frame.bossStatusIcons[i] then
                     if boss.killed then
                         frame.bossStatusIcons[i]:SetVertexColor(0.62, 1.00, 0.70, 1)

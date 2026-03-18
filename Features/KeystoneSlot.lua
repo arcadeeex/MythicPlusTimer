@@ -8,6 +8,72 @@ local MPT = MythicPlusTimer
 local KEYSTONE_ITEM_ID = 374584
 local pendingSlotTime = nil
 
+local function NormalizeText(s)
+    if type(s) ~= "string" then return "" end
+    s = s:lower()
+    s = s:gsub("ё", "е")
+    s = s:gsub("%s+", " ")
+    s = s:gsub("^%s+", "")
+    s = s:gsub("%s+$", "")
+    return s
+end
+
+local function ExtractKeystoneDungeonName(itemName)
+    if type(itemName) ~= "string" or itemName == "" then return nil end
+    local name = itemName
+    -- Common prefixes:
+    -- "Эпохальный ключ - Чертоги Молний"
+    -- "Эпохальный ключ: Чертоги Молний"
+    -- "Эпохальный ключ — Чертоги Молний"
+    name = name:gsub("^Эпохальный ключ%s*[%-%—:]%s*", "")
+    -- Generic fallback: cut by first separator if prefix is localized differently.
+    if name == itemName then
+        local generic = itemName:match("^.-%s*[%-%—:]%s*(.+)$")
+        if generic and generic ~= "" then
+            name = generic
+        end
+    end
+    -- Strip optional suffixes like "(+10)" or "(10)".
+    name = name:gsub("%s*%b()%s*$", "")
+    -- Strip trailing "+10"/"10" style level hints if present.
+    name = name:gsub("%s*%+%d+%s*$", "")
+    name = name:gsub("%s+%d+%s*$", "")
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    if name ~= "" then return name end
+    return nil
+end
+
+local function GetCurrentDungeonName()
+    local instanceName = GetInstanceInfo()
+    if type(instanceName) == "string" and instanceName ~= "" then
+        return instanceName
+    end
+    -- Fallback when instance API is temporarily empty right after zoning.
+    if GetRealZoneText then
+        local z = GetRealZoneText()
+        if type(z) == "string" and z ~= "" then return z end
+    end
+    return nil
+end
+
+local function IsKeystoneForCurrentLocation(itemLink)
+    if type(itemLink) ~= "string" or itemLink == "" then return false, nil, nil end
+    local itemName = itemLink:match("%[(.-)%]") or itemLink
+    local dungeonName = ExtractKeystoneDungeonName(itemName)
+    if not dungeonName then
+        return false, nil, nil
+    end
+    local wanted = NormalizeText(dungeonName)
+    if wanted == "" then return false, dungeonName, nil end
+    local currentDungeon = GetCurrentDungeonName()
+    if type(currentDungeon) ~= "string" or currentDungeon == "" then
+        return false, dungeonName, nil
+    end
+    local nCurrent = NormalizeText(currentDungeon)
+    local matched = nCurrent ~= "" and nCurrent:find(wanted, 1, true) ~= nil
+    return matched, dungeonName, currentDungeon
+end
+
 -- Ищет ключ в сумках и возвращает bag, slot (или nil, nil если не найден)
 local function FindKeystoneInBags()
     for bag = 0, 4 do
@@ -15,15 +81,16 @@ local function FindKeystoneInBags()
         local slots = getSlots and getSlots(bag)
         if slots and slots > 0 then
             local getItemID = (GetContainerItemID or (C_Container and C_Container.GetContainerItemID))
+            local getItemLink = (GetContainerItemLink or (C_Container and C_Container.GetContainerItemLink))
             for slot = 1, slots do
                 local itemID = getItemID and getItemID(bag, slot)
                 if itemID == KEYSTONE_ITEM_ID then
-                    return bag, slot
+                    return bag, slot, (getItemLink and getItemLink(bag, slot) or nil)
                 end
             end
         end
     end
-    return nil, nil
+    return nil, nil, nil
 end
 
 -- Пытается вставить ключ в чашу
@@ -38,8 +105,12 @@ local function TrySlotKeystone()
         return
     end
 
-    local bag, slot = FindKeystoneInBags()
+    local bag, slot, itemLink = FindKeystoneInBags()
     if not bag then
+        return
+    end
+    local matched = IsKeystoneForCurrentLocation(itemLink)
+    if not matched then
         return
     end
 
