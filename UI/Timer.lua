@@ -2945,29 +2945,108 @@ frame:Hide()
 -- Polling фрейм — детекция старта/стопа ключа
 -- CHALLENGE_MODE_START не стреляет на Sirus!
 -- Опрашиваем IsChallengeModeActive() раз в секунду.
--- Фрейм НЕ скрывается — OnUpdate всегда работает.
+-- Таймер показываем только в M+ инстансе и при активном челлендже (или экран «ключ завершён» в инстансе).
 -- ============================================================
 local pollFrame = CreateFrame("Frame")
 local pollThrottle = 0
+-- nil = ещё не опрашивали (после PEW снова nil — первая итерация как «синхронизация»)
+local lastPollChallengeActive = nil
+
+local function GetChallengeModeActive()
+    if not C_ChallengeMode or not C_ChallengeMode.IsChallengeModeActive then return false end
+    local ok, v = pcall(function() return C_ChallengeMode.IsChallengeModeActive() end)
+    return ok and v == true
+end
+
+local function IsInMythicPartyDungeon()
+    local inInstance, instanceType = IsInInstance()
+    if not inInstance or instanceType ~= "party" then return false end
+    local _, _, diffID = GetInstanceInfo()
+    return diffID == 3
+end
+
+-- Показ окна: только внутри M+ инстанса при активном challenge-mode.
+local function ShouldShowMythicTimerUI()
+    return IsInMythicPartyDungeon() and GetChallengeModeActive()
+end
 
 pollFrame:SetScript("OnUpdate", function(_, elapsed)
     pollThrottle = pollThrottle + elapsed
     if pollThrottle < 1 then return end
     pollThrottle = 0
 
-    local inInstance, instanceType = IsInInstance()
-    if not inInstance or instanceType ~= "party" then return end
-    local _, _, diffID = GetInstanceInfo()
-    if diffID ~= 3 then return end
+    local inMythic = IsInMythicPartyDungeon()
+    local cmActive = GetChallengeModeActive()
+    local showUI = ShouldShowMythicTimerUI()
 
-    local ok, isActive = pcall(function() return C_ChallengeMode.IsChallengeModeActive() end)
-    if not ok then return end
+    -- Вышли из инстанса во время ключа: только скрываем UI, но не сбрасываем забег.
+    if not inMythic then
+        if frame:IsShown() then frame:Hide() end
+        lastPollChallengeActive = cmActive
+        return
+    end
 
-    if isActive and not state.running and not state.completed then
-        MPT:StartTimer()
-    elseif not isActive and state.running then
+    -- Внутри M+ инстанса, но ключ не активен: считаем забег завершённым/сброшенным.
+    if not showUI then
+        if state.running or state.completed or frame:IsShown() then
+            MPT:StopTimer(false)
+            frame:Hide()
+        end
+        if MPT.charDb then
+            MPT.charDb.keyStartUnix = nil
+            MPT.charDb.bosses = nil
+        end
+        lastPollChallengeActive = cmActive
+        return
+    end
+
+    -- showUI == true: мы в M+ инстансе и (cmActive или экран completed)
+    if lastPollChallengeActive == nil then
+        lastPollChallengeActive = cmActive
+        if cmActive and not state.running and not state.completed then
+            MPT:StartTimer(false)
+        end
+        return
+    end
+
+    local challengeRising = cmActive and (lastPollChallengeActive == false)
+    lastPollChallengeActive = cmActive
+
+    -- Новый старт челленджа на сервере (после простоя, нового ключа в той же зоне и т.д.)
+    if challengeRising then
+        if MPT.charDb then
+            MPT.charDb.keyStartUnix = nil
+            MPT.charDb.bosses = nil
+        end
+        state.completed = false
+        if state.running then
+            state.running = false
+        end
+    end
+
+    -- Смена карты/уровня при активном ключе — новый забег
+    if cmActive and state.running then
+        local mapOk, curMap = pcall(function() return C_ChallengeMode.GetActiveChallengeMapID() end)
+        local curLevel = select(1, GetKeystoneData())
+        if mapOk and type(curMap) == "number" and state.mapID and curMap ~= state.mapID then
+            MPT:StartTimer(true)
+            return
+        end
+        if type(curLevel) == "number" and type(state.level) == "number" and curLevel ~= state.level then
+            MPT:StartTimer(true)
+            return
+        end
+    end
+
+    if cmActive and not state.running and not state.completed then
+        MPT:StartTimer(false)
+    elseif not cmActive and state.running then
         MPT:StopTimer(false)
         frame:Hide()
+    end
+
+    if cmActive and state.running and not frame:IsShown() then
+        MPT:ShowTimer()
     end
 end)
 
@@ -3291,7 +3370,12 @@ function MPT:RefreshForcesMode()
     end
 end
 
-function MPT:StartTimer()
+function MPT:StartTimer(forceNew)
+    forceNew = forceNew == true
+    if forceNew and self.charDb then
+        self.charDb.keyStartUnix = nil
+        self.charDb.bosses = nil
+    end
     state.running   = true
     state.completed = false
     ClearEngaged()
@@ -3303,7 +3387,8 @@ function MPT:StartTimer()
 
     -- Восстановление после /reload: charDb.keyStartUnix сохраняет unix-время старта.
     -- time() — секунды с эпохи, переживает reload. GetTime() — нет.
-    local savedUnix = self.charDb and self.charDb.keyStartUnix
+    -- forceNew — явный новый забег (новый ключ после сбоя, смена карты и т.д.)
+    local savedUnix = (not forceNew) and self.charDb and self.charDb.keyStartUnix or nil
     if savedUnix then
         -- Ключ уже шёл до reload — восстанавливаем elapsed и боссов
         local elapsed   = math.max(0, time() - savedUnix)
@@ -4144,36 +4229,42 @@ pcall(function() evFrame:RegisterEvent("ENCOUNTER_END")   end)
 evFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "CHALLENGE_MODE_START" then
         if not state.running then
-            MPT:StartTimer()
+            MPT:StartTimer(true)
         end
 
     elseif event == "CHALLENGE_MODE_COMPLETED" then
         MPT:StopTimer(true)
-        frame:Show()
+        frame:Hide()
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         MPT:LoadTimerPosition()
-        local inInstance, instanceType = IsInInstance()
-        local _, _, diffID = GetInstanceInfo()
-        local inMythicDungeon = inInstance and instanceType == "party" and diffID == 3
-        local cmOk, isActive = pcall(function() return C_ChallengeMode.IsChallengeModeActive() end)
-        -- Консервативная проверка: при /reload внутри ключа IsInInstance может ещё
-        -- не вернуть правильный результат — дополнительно проверяем IsChallengeModeActive.
-        -- Очищаем только если ОБА источника говорят что ключа нет.
-        local keyActive = (cmOk and isActive == true) or inMythicDungeon
-        if not keyActive and MPT.charDb then
-            MPT.charDb.keyStartUnix = nil
-            MPT.charDb.bosses       = nil
-        end
-        if not keyActive and not state.running then
-            state.completed = false
-            state.bosses    = nil
+        -- Первая секунда после смены зоны — поллинг заново синхронизирует старт/стоп ключа
+        lastPollChallengeActive = nil
+        local inMythic = IsInMythicPartyDungeon()
+        local cmActive = GetChallengeModeActive()
+        local showUI = inMythic and cmActive
+
+        if not inMythic then
+            -- Вне инстанса ничего не сбрасываем: ключ может продолжаться.
             frame:Hide()
+        elseif not showUI then
+            -- Внутри M+ инстанса, но challenge не активен: сбрасываем состояние.
+            if state.running or state.completed or frame:IsShown() then
+                MPT:StopTimer(false)
+                frame:Hide()
+            end
+            if MPT.charDb then
+                MPT.charDb.keyStartUnix = nil
+                MPT.charDb.bosses = nil
+            end
         end
-        -- При любом PLAYER_ENTERING_WORLD во время активного ключа (respawn после вайпа)
-        -- сбрасываем engaged таблицу — все мобы на паке уже мертвы или сброшены
-        if state.running then
+
+        -- Respawn после вайпа / смена этажа — пак в бою сбрасываем
+        if state.running and showUI then
             ClearEngaged()
+            if not frame:IsShown() then
+                MPT:ShowTimer()
+            end
         end
 
     elseif event == "PLAYER_REGEN_ENABLED" then
