@@ -2978,6 +2978,12 @@ pollFrame:SetScript("OnUpdate", function(_, elapsed)
     local inMythic = IsInMythicPartyDungeon()
     local cmActive = GetChallengeModeActive()
     local showUI = ShouldShowMythicTimerUI()
+    local previewActive = MPT.IsPreviewActive and MPT:IsPreviewActive()
+
+    -- Превью вне активного ключа не трогаем автологикой скрытия/сброса.
+    if previewActive and not cmActive then
+        return
+    end
 
     -- Вышли из инстанса во время ключа: только скрываем UI, но не сбрасываем забег.
     if not inMythic then
@@ -4243,17 +4249,20 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         local inMythic = IsInMythicPartyDungeon()
         local cmActive = GetChallengeModeActive()
         local showUI = inMythic and cmActive
+        local previewActive = MPT.IsPreviewActive and MPT:IsPreviewActive()
 
         if not inMythic then
             -- Вне инстанса ничего не сбрасываем: ключ может продолжаться.
-            frame:Hide()
+            if not previewActive then
+                frame:Hide()
+            end
         elseif not showUI then
             -- Внутри M+ инстанса, но challenge не активен: сбрасываем состояние.
-            if state.running or state.completed or frame:IsShown() then
+            if not previewActive and (state.running or state.completed or frame:IsShown()) then
                 MPT:StopTimer(false)
                 frame:Hide()
             end
-            if MPT.charDb then
+            if not previewActive and MPT.charDb then
                 MPT.charDb.keyStartUnix = nil
                 MPT.charDb.bosses = nil
             end
