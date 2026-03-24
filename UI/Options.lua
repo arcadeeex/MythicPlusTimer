@@ -265,6 +265,26 @@ optInitFrame:SetScript("OnEvent", function(self)
         end
     end)
 
+    -- Чекбокс: процент перепула в истории забегов
+    local showOverpullPctCheck = CreateFrame("CheckButton", "MPTShowOverpullPctCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
+    showOverpullPctCheck:SetPoint("TOPLEFT", recordCheck, "BOTTOMLEFT", 0, -4)
+
+    local showOverpullPctText = _G["MPTShowOverpullPctCheckText"]
+    if showOverpullPctText then
+        showOverpullPctText:SetText("Показывать процент перепула")
+    end
+    showOverpullPctCheck.tooltipText = "Перепул в истории"
+    showOverpullPctCheck.tooltipRequirement = "Показывает строку «Перепулено» в списке забегов и в деталях записи"
+
+    showOverpullPctCheck:HookScript("OnClick", function(check)
+        if MPT.db then
+            MPT.db.showOverpullPct = check:GetChecked() == 1 or check:GetChecked() == true
+            if MPT.RefreshConfigWindow then
+                MPT:RefreshConfigWindow()
+            end
+        end
+    end)
+
     -- ── Раздел: Прогресс убитых мобов (справа) ────────────────────
     local progressHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     progressHeader:SetPoint("TOPLEFT", checkHeader, "TOPLEFT", 260, 0)
@@ -425,7 +445,7 @@ optInitFrame:SetScript("OnEvent", function(self)
 
     -- Чекбокс: Авто-вставка ключа (в разделе "Общее" слева)
     local autoKeystoneCheck = CreateFrame("CheckButton", "MPTAutoKeystoneCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
-    autoKeystoneCheck:SetPoint("TOPLEFT", recordCheck, "BOTTOMLEFT", 0, -4)
+    autoKeystoneCheck:SetPoint("TOPLEFT", showOverpullPctCheck, "BOTTOMLEFT", 0, -4)
 
     local autoKeystoneText = _G["MPTAutoKeystoneCheckText"]
     if autoKeystoneText then
@@ -440,9 +460,26 @@ optInitFrame:SetScript("OnEvent", function(self)
         end
     end)
 
+    -- Чекбокс: Показывать быстрые действия у окна ключа
+    local quickActionsCheck = CreateFrame("CheckButton", "MPTQuickActionsCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
+    quickActionsCheck:SetPoint("TOPLEFT", autoKeystoneCheck, "BOTTOMLEFT", 0, -4)
+
+    local quickActionsText = _G["MPTQuickActionsCheckText"]
+    if quickActionsText then
+        quickActionsText:SetText("Отображать быстрые действия при открытии окна ключа")
+    end
+    quickActionsCheck.tooltipText = "Быстрые действия у окна ключа"
+    quickActionsCheck.tooltipRequirement = "Показывает кнопки Пул и Проверка готовности рядом с окном вставки ключа"
+
+    quickActionsCheck:HookScript("OnClick", function(check)
+        if MPT.db then
+            MPT.db.showKeystoneActions = check:GetChecked() == 1 or check:GetChecked() == true
+        end
+    end)
+
     -- Чекбокс: Обратный таймер
     local reverseTimerCheck = CreateFrame("CheckButton", "MPTReverseTimerCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
-    reverseTimerCheck:SetPoint("TOPLEFT", autoKeystoneCheck, "BOTTOMLEFT", 0, -4)
+    reverseTimerCheck:SetPoint("TOPLEFT", quickActionsCheck, "BOTTOMLEFT", 0, -4)
 
     local reverseTimerText = _G["MPTReverseTimerCheckText"]
     if reverseTimerText then
@@ -574,12 +611,16 @@ optInitFrame:SetScript("OnEvent", function(self)
         if recordCheck then
             recordCheck:SetChecked(MPT.db and (MPT.db.showBossRecord ~= false) or false)
         end
+        if showOverpullPctCheck then
+            showOverpullPctCheck:SetChecked(MPT.db and MPT.db.showOverpullPct == true)
+        end
         affixTextCheck:SetChecked(MPT.db and MPT.db.affixText or false)
         affixIconsCheck:SetChecked(MPT.db and MPT.db.affixIcons or false)
         forcesBarCheck:SetChecked(MPT.db and MPT.db.forcesBar or false)
         showForcesInTooltipCheck:SetChecked(MPT.db and MPT.db.showForcesInTooltip ~= false)
         showForcesPullPctCheck:SetChecked(MPT.db and MPT.db.showForcesPullPct ~= false)
         autoKeystoneCheck:SetChecked(MPT.db and MPT.db.autoKeystone or false)
+        quickActionsCheck:SetChecked(MPT.db and MPT.db.showKeystoneActions ~= false)
         reverseTimerCheck:SetChecked(MPT.db and MPT.db.reverseTimer or false)
         if hideDefaultTrackerCheck then
             hideDefaultTrackerCheck:SetChecked(MPT.db and MPT.db.hideDefaultTracker or false)

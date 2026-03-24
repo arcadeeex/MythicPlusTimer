@@ -28,6 +28,16 @@ local generalChecks = {}
 local colorRows = {}
 local navButtons = {}
 local dropdowns = {}
+local historyRows = {}
+local historySection
+local historyListClip
+local historyListSlider
+local historyEmptyLabel
+local historyScrollOffset = 0
+local historyVisibleRows = 13
+local historyDetailWindow
+local historyDetailTitle
+local historyDetailText
 
 local THEME = {
     bg = { 0.03, 0.03, 0.03, 0.96 },
@@ -82,6 +92,381 @@ local function CreateStyledButton(parent, width, height, text)
     btn.txt:SetTextColor(THEME.text[1], THEME.text[2], THEME.text[3], 1)
     StyleActionButton(btn)
     return btn
+end
+
+local function FormatDuration(sec)
+    sec = tonumber(sec) or 0
+    if sec < 0 then sec = 0 end
+    return string.format("%d:%02d", math.floor(sec / 60), math.floor(sec % 60))
+end
+
+local function FormatRunDate(ts)
+    if not ts then return "неизвестно" end
+    return date("%d.%m.%Y %H:%M", ts)
+end
+
+local function GetEffectiveElapsed(entry)
+    if type(entry) ~= "table" then return 0 end
+    local eff = tonumber(entry.effectiveElapsed)
+    if eff then return eff end
+    local elapsed = tonumber(entry.elapsed) or 0
+    local deathLost = tonumber(entry.deathLost) or 0
+    return elapsed + deathLost
+end
+
+local function GetPlus1Limit(entry)
+    if type(entry) ~= "table" then return nil end
+    local p1 = tonumber(entry.plus1Limit)
+    if p1 and p1 > 0 then return p1 end
+    local p2 = tonumber(entry.plus2Limit)
+    if (not p1 or p1 <= 0) and (not p2 or p2 <= 0) and MPT and MPT.GetMapTimerLimits then
+        local baseLimit, mapPlus2 = MPT:GetMapTimerLimits(entry.mapID)
+        if type(baseLimit) == "number" and baseLimit > 0 then
+            return baseLimit
+        end
+        if type(mapPlus2) == "number" and mapPlus2 > 0 then
+            p2 = mapPlus2
+        end
+    end
+    if p2 and p2 > 0 then
+        return math.floor((p2 / 0.80) + 0.5)
+    end
+    return nil
+end
+
+local function GetPlus2Limit(entry)
+    local p2 = tonumber(entry and entry.plus2Limit)
+    if p2 and p2 > 0 then return p2 end
+    if MPT and MPT.GetMapTimerLimits then
+        local _, mapPlus2 = MPT:GetMapTimerLimits(entry and entry.mapID)
+        if type(mapPlus2) == "number" and mapPlus2 > 0 then
+            return mapPlus2
+        end
+    end
+    return nil
+end
+
+local function GetPlus3Limit(entry)
+    local p3 = tonumber(entry and entry.plus3Limit)
+    if p3 and p3 > 0 then return p3 end
+    if MPT and MPT.GetMapTimerLimits then
+        local _, _, mapPlus3 = MPT:GetMapTimerLimits(entry and entry.mapID)
+        if type(mapPlus3) == "number" and mapPlus3 > 0 then
+            return mapPlus3
+        end
+    end
+    return nil
+end
+
+local function GetRunUpgradeLevel(entry)
+    local eff = GetEffectiveElapsed(entry)
+    local p3 = GetPlus3Limit(entry)
+    local p2 = GetPlus2Limit(entry)
+    local p1 = GetPlus1Limit(entry)
+
+    if p3 and p3 > 0 and eff <= p3 then return 3 end
+    if p2 and p2 > 0 and eff <= p2 then return 2 end
+    if p1 and p1 > 0 and eff <= p1 then return 1 end
+    if p1 or p2 or p3 then return 0 end
+    return nil
+end
+
+local function FormatSignedDuration(delta)
+    delta = tonumber(delta) or 0
+    local sign = delta >= 0 and "+" or "-"
+    local abs = math.abs(delta)
+    return string.format("%s%d:%02d", sign, math.floor(abs / 60), math.floor(abs % 60))
+end
+
+local function GetRunOverpullPct(entry)
+    if type(entry) ~= "table" then return nil end
+    local v = tonumber(entry.overpullPct)
+    if v ~= nil then
+        if v < 0 then return 0 end
+        return v
+    end
+    local killedTotal = tonumber(entry.forcesKilledTotal)
+    if killedTotal ~= nil then
+        return math.max(0, killedTotal - 100)
+    end
+    return nil
+end
+
+local function ShouldShowOverpullPct()
+    return MPT.db and MPT.db.showOverpullPct == true
+end
+
+local function BuildRunSummaryText(entry)
+    local lvl = tonumber(entry and entry.level) or 0
+    local levelText = lvl > 0 and ("+" .. lvl) or "+?"
+    local dungeon = (entry and entry.dungeonName) or "Неизвестное подземелье"
+    local totalTime = FormatDuration(GetEffectiveElapsed(entry))
+    local upgrade = GetRunUpgradeLevel(entry)
+    local upgradeText = upgrade ~= nil and string.format(" (+%d)", upgrade) or ""
+    local overpullText = ""
+    if ShouldShowOverpullPct() then
+        local overpullPct = GetRunOverpullPct(entry)
+        if overpullPct ~= nil then
+            overpullText = string.format("  |  Перепулено: %.1f%%", overpullPct)
+        end
+    end
+    return string.format("%s %s  %s%s%s", levelText, dungeon, totalTime, upgradeText, overpullText)
+end
+
+local function BuildAffixLine(entry)
+    if type(entry) ~= "table" then return "Аффиксы: —" end
+    if type(entry.affixes) == "table" and #entry.affixes > 0 and MPT and MPT.GetAffixInfo then
+        local names = {}
+        for _, affixId in ipairs(entry.affixes) do
+            local name = select(1, MPT:GetAffixInfo(affixId))
+            if type(name) == "string" and name ~= "" then
+                names[#names + 1] = name
+            else
+                names[#names + 1] = "#" .. tostring(affixId)
+            end
+        end
+        if #names > 0 then
+            return "Аффиксы: " .. table.concat(names, ", ")
+        end
+    end
+    if type(entry.affixNames) == "table" and #entry.affixNames > 0 then
+        return "Аффиксы: " .. table.concat(entry.affixNames, ", ")
+    end
+    if type(entry.affixes) == "table" and #entry.affixes > 0 then
+        local ids = {}
+        for i, v in ipairs(entry.affixes) do
+            ids[i] = "#" .. tostring(v)
+        end
+        return "Аффиксы: " .. table.concat(ids, ", ")
+    end
+    return "Аффиксы: —"
+end
+
+local function GetClassHex(classToken)
+    if not classToken or not RAID_CLASS_COLORS then
+        return "ffffffff"
+    end
+    local c = RAID_CLASS_COLORS[classToken]
+    if not c then
+        return "ffffffff"
+    end
+    return string.format("%02x%02x%02x", math.floor((c.r or 1) * 255), math.floor((c.g or 1) * 255), math.floor((c.b or 1) * 255))
+end
+
+local function BuildPartyLine(entry)
+    if type(entry) ~= "table" or type(entry.partyMembers) ~= "table" or #entry.partyMembers == 0 then
+        return "Состав: —"
+    end
+    local out = {}
+    for _, member in ipairs(entry.partyMembers) do
+        local name = member and member.name
+        if name and name ~= "" then
+            local classHex = GetClassHex(member.class)
+            out[#out + 1] = string.format("|cff%s%s|r", classHex, name)
+        end
+    end
+    if #out == 0 then
+        return "Состав: —"
+    end
+    return "Состав: " .. table.concat(out, ", ")
+end
+
+local function BuildRunDetailText(entry)
+    if type(entry) ~= "table" then
+        return "Запись повреждена."
+    end
+
+    local lines = {}
+    local lvl = tonumber(entry.level) or 0
+    local levelText = lvl > 0 and ("+" .. lvl) or "+?"
+    lines[#lines + 1] = string.format("Ключ: %s %s", levelText, entry.dungeonName or "Неизвестное подземелье")
+    lines[#lines + 1] = string.format("Дата: %s", FormatRunDate(entry.completedAt))
+    lines[#lines + 1] = BuildAffixLine(entry)
+    lines[#lines + 1] = BuildPartyLine(entry)
+    lines[#lines + 1] = ""
+    local effElapsed = GetEffectiveElapsed(entry)
+    lines[#lines + 1] = string.format("Время прохождения: %s", FormatDuration(effElapsed))
+    lines[#lines + 1] = string.format("Чистое время (без штрафа): %s", FormatDuration(entry.elapsed))
+    lines[#lines + 1] = string.format("Смертей: %s", tostring(entry.deathCount or 0))
+    lines[#lines + 1] = string.format("Штраф за смерти: %s", FormatDuration(entry.deathLost or 0))
+    lines[#lines + 1] = string.format("Боевые воскрешения: %s", tostring(entry.battleResCount or "—"))
+    local upgrade = GetRunUpgradeLevel(entry)
+    if upgrade ~= nil then
+        lines[#lines + 1] = string.format("Результат ключа: +%d", upgrade)
+    end
+    if type(entry.enemyForces) == "number" then
+        lines[#lines + 1] = string.format("Прогресс врагов: %.1f%%", entry.enemyForces)
+    else
+        lines[#lines + 1] = "Прогресс врагов: —"
+    end
+    if ShouldShowOverpullPct() then
+        local overpullPct = GetRunOverpullPct(entry)
+        if overpullPct ~= nil then
+            lines[#lines + 1] = string.format("Перепулено: %.1f%%", overpullPct)
+        else
+            lines[#lines + 1] = "Перепулено: —"
+        end
+    end
+    lines[#lines + 1] = ""
+    local p1 = GetPlus1Limit(entry)
+    local p2 = GetPlus2Limit(entry)
+    local p3 = GetPlus3Limit(entry)
+    if p1 and p1 > 0 then
+        lines[#lines + 1] = string.format("Лимит +1: %s", FormatDuration(p1))
+    else
+        lines[#lines + 1] = "Лимит +1: —"
+    end
+    if p2 and p2 > 0 then
+        lines[#lines + 1] = string.format("Лимит +2: %s", FormatDuration(p2))
+    else
+        lines[#lines + 1] = "Лимит +2: —"
+    end
+    if p3 and p3 > 0 then
+        lines[#lines + 1] = string.format("Лимит +3: %s", FormatDuration(p3))
+    else
+        lines[#lines + 1] = "Лимит +3: —"
+    end
+    lines[#lines + 1] = ""
+    if p1 and p1 > 0 then
+        lines[#lines + 1] = string.format("Таймер +1: %s", FormatSignedDuration(effElapsed - p1))
+    else
+        lines[#lines + 1] = "Таймер +1: —"
+    end
+    if p2 and p2 > 0 then
+        lines[#lines + 1] = string.format("Таймер +2: %s", FormatSignedDuration(effElapsed - p2))
+    else
+        lines[#lines + 1] = "Таймер +2: —"
+    end
+    if p3 and p3 > 0 then
+        lines[#lines + 1] = string.format("Таймер +3: %s", FormatSignedDuration(effElapsed - p3))
+    else
+        lines[#lines + 1] = "Таймер +3: —"
+    end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "Боссы:"
+    if type(entry.bosses) == "table" and #entry.bosses > 0 then
+        for _, boss in ipairs(entry.bosses) do
+            if boss.killed then
+                lines[#lines + 1] = string.format("  [x] %s — %s", boss.name or "?", FormatDuration(boss.killTime))
+            else
+                lines[#lines + 1] = string.format("  [ ] %s — не убит", boss.name or "?")
+            end
+        end
+    else
+        lines[#lines + 1] = "  —"
+    end
+    return table.concat(lines, "\n")
+end
+
+local function EnsureHistoryDetailWindow()
+    if historyDetailWindow then return end
+
+    historyDetailWindow = CreateFrame("Frame", "MPTHistoryDetailWindow", UIParent)
+    historyDetailWindow:SetSize(560, 520)
+    historyDetailWindow:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    historyDetailWindow:SetFrameStrata("DIALOG")
+    historyDetailWindow:SetFrameLevel(200)
+    historyDetailWindow:SetMovable(true)
+    historyDetailWindow:EnableMouse(true)
+    historyDetailWindow:RegisterForDrag("LeftButton")
+    historyDetailWindow:SetScript("OnDragStart", function(self)
+        self:StartMoving()
+    end)
+    historyDetailWindow:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+    end)
+    ApplyPanelStyle(historyDetailWindow, false)
+    historyDetailWindow:Hide()
+
+    historyDetailTitle = historyDetailWindow:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    historyDetailTitle:SetPoint("TOPLEFT", historyDetailWindow, "TOPLEFT", 14, -14)
+    historyDetailTitle:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+    historyDetailTitle:SetText("История захода")
+
+    local close = CreateFrame("Button", nil, historyDetailWindow, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", historyDetailWindow, "TOPRIGHT", -6, -6)
+
+    local scroll = CreateFrame("ScrollFrame", nil, historyDetailWindow)
+    scroll:SetPoint("TOPLEFT", historyDetailWindow, "TOPLEFT", 12, -40)
+    scroll:SetPoint("BOTTOMRIGHT", historyDetailWindow, "BOTTOMRIGHT", -30, 12)
+    scroll:EnableMouseWheel(true)
+
+    local child = CreateFrame("Frame", nil, scroll)
+    child:SetWidth(500)
+    child:SetHeight(1)
+    scroll:SetScrollChild(child)
+
+    historyDetailText = child:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    historyDetailText:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
+    historyDetailText:SetWidth(500)
+    historyDetailText:SetJustifyH("LEFT")
+    historyDetailText:SetJustifyV("TOP")
+    historyDetailText:SetTextColor(THEME.text[1], THEME.text[2], THEME.text[3], 1)
+    historyDetailText:SetText("")
+
+    local barWrap = CreateFrame("Frame", nil, historyDetailWindow)
+    barWrap:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 4, 0)
+    barWrap:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 4, 0)
+    barWrap:SetWidth(14)
+    ApplyPanelStyle(barWrap, true)
+
+    local bar = CreateFrame("Slider", nil, barWrap)
+    bar:SetPoint("TOPLEFT", barWrap, "TOPLEFT", 0, 0)
+    bar:SetPoint("BOTTOMLEFT", barWrap, "BOTTOMLEFT", 0, 0)
+    bar:SetWidth(14)
+    bar:SetMinMaxValues(0, 0)
+    bar:SetValueStep(1)
+    bar:SetThumbTexture("Interface\\BUTTONS\\WHITE8X8")
+    local thumb = bar:GetThumbTexture()
+    if thumb then
+        thumb:SetWidth(10)
+        thumb:SetHeight(24)
+        thumb:SetVertexColor(0.60, 0.60, 0.60, 0.95)
+    end
+
+    local lock = false
+    local function SetScrollValue(v)
+        if lock then return end
+        lock = true
+        local maxV = scroll:GetVerticalScrollRange() or 0
+        if v < 0 then v = 0 end
+        if v > maxV then v = maxV end
+        scroll:SetVerticalScroll(v)
+        bar:SetValue(v)
+        lock = false
+    end
+
+    bar:SetScript("OnValueChanged", function(_, value)
+        if lock then return end
+        SetScrollValue(value)
+    end)
+
+    scroll:SetScript("OnVerticalScroll", function(_, offset)
+        if lock then return end
+        lock = true
+        bar:SetValue(offset)
+        lock = false
+    end)
+    scroll:SetScript("OnScrollRangeChanged", function(_, _, yRange)
+        local maxV = yRange or 0
+        bar:SetMinMaxValues(0, maxV)
+        SetScrollValue(scroll:GetVerticalScroll() or 0)
+    end)
+    scroll:SetScript("OnMouseWheel", function(_, delta)
+        SetScrollValue((scroll:GetVerticalScroll() or 0) - delta * 30)
+    end)
+
+    historyDetailWindow.scrollChild = child
+    historyDetailWindow.scrollFrame = scroll
+end
+
+local function ShowHistoryDetails(entry)
+    if historyDetailWindow and historyDetailWindow:IsShown() then
+        historyDetailWindow:Hide()
+    end
+    if MPT and MPT.ShowHistoryRunOnTimer then
+        MPT:ShowHistoryRunOnTimer(entry)
+    end
 end
 
 -- -----------------------------------------------------------------------------
@@ -543,7 +928,11 @@ local function BuildGeneralSection()
         { label = "Показывать рекорд подземелья", key = "showBossRecord", onApply = function()
             if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then MPT:ShowPreview() end
         end },
+        { label = "Показывать процент перепула", key = "showOverpullPct", onApply = function()
+            if MPT.RefreshConfigWindow then MPT:RefreshConfigWindow() end
+        end },
         { label = "Вставлять ключ автоматически", key = "autoKeystone" },
+        { label = "Отображать быстрые действия при открытии окна ключа", key = "showKeystoneActions" },
         { label = "Скрывать стандартный интерфейс", key = "hideDefaultTracker", onApply = function()
             if MPT.ApplyDefaultTrackerVisibility then MPT:ApplyDefaultTrackerVisibility() end
         end },
@@ -695,6 +1084,171 @@ local function BuildColorsSection()
     rebuildRows()
 end
 
+local function RefreshHistorySection()
+    if not historySection or not historyListClip then return end
+
+    local runs = (MPT.GetRunHistory and MPT:GetRunHistory()) or {}
+    if type(runs) ~= "table" then runs = {} end
+    local maxOffset = math.max(0, #runs - historyVisibleRows)
+    if historyScrollOffset > maxOffset then historyScrollOffset = maxOffset end
+    if historyScrollOffset < 0 then historyScrollOffset = 0 end
+
+    for i = 1, historyVisibleRows do
+        local row = historyRows[i]
+        local idx = historyScrollOffset + i
+        local entry = runs[idx]
+        if row and entry then
+            row.entry = entry
+            row.title:SetText(BuildRunSummaryText(entry))
+            row.meta:SetText(string.format("%s  |  %s", BuildAffixLine(entry), FormatRunDate(entry.completedAt)))
+            if row.party then
+                row.party:SetText(BuildPartyLine(entry))
+            end
+            row:Show()
+        elseif row then
+            row.entry = nil
+            if row.party then
+                row.party:SetText("")
+            end
+            row:Hide()
+        end
+    end
+
+    if historyEmptyLabel then
+        historyEmptyLabel:SetShown(#runs == 0)
+    end
+
+    if historyListSlider then
+        if #runs > historyVisibleRows then
+            historyListSlider:SetMinMaxValues(0, maxOffset)
+            historyListSlider:SetValue(historyScrollOffset)
+            historyListSlider:Show()
+        else
+            historyListSlider:SetMinMaxValues(0, 0)
+            historyListSlider:SetValue(0)
+            historyListSlider:Hide()
+        end
+    end
+end
+
+local function BuildHistorySection()
+    local frame = CreateFrame("Frame", nil, contentChild)
+    frame:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 0, 0)
+    frame:SetPoint("TOPRIGHT", contentChild, "TOPRIGHT", 0, 0)
+    frame:SetHeight(440)
+    sectionFrames.history = frame
+    historySection = frame
+
+    local header = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    header:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -10)
+    header:SetText("История заходов")
+    header:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+
+    local hint = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    hint:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -6)
+    hint:SetText("Клик по строке показывает таймер в финальном состоянии выбранного ключа.")
+    hint:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
+
+    historyListClip = CreateFrame("Frame", nil, frame)
+    historyListClip:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, -44)
+    historyListClip:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -44)
+    historyListClip:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 6, 44)
+    historyListClip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, 44)
+    ApplyPanelStyle(historyListClip, true)
+    historyListClip:EnableMouseWheel(true)
+
+    local rowH = 48
+    for i = 1, historyVisibleRows do
+        local row = CreateFrame("Button", nil, historyListClip)
+        row:SetPoint("TOPLEFT", historyListClip, "TOPLEFT", 2, -3 - (i - 1) * rowH)
+        row:SetPoint("TOPRIGHT", historyListClip, "TOPRIGHT", -2, -3 - (i - 1) * rowH)
+        row:SetHeight(rowH - 2)
+        ApplyPanelStyle(row, true)
+
+        row.title = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -4)
+        row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -4)
+        row.title:SetJustifyH("LEFT")
+        row.title:SetTextColor(THEME.text[1], THEME.text[2], THEME.text[3], 1)
+
+        row.meta = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        row.meta:SetPoint("TOPLEFT", row.title, "BOTTOMLEFT", 0, -2)
+        row.meta:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -2)
+        row.meta:SetJustifyH("LEFT")
+        row.meta:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
+
+        row.party = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        row.party:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 6, 4)
+        row.party:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 4)
+        row.party:SetJustifyH("LEFT")
+        row.party:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
+
+        row:SetScript("OnClick", function(self)
+            if self.entry then
+                ShowHistoryDetails(self.entry)
+            end
+        end)
+        row:SetScript("OnEnter", function(self)
+            self:SetBackdropBorderColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 0.8)
+        end)
+        row:SetScript("OnLeave", function(self)
+            self:SetBackdropBorderColor(THEME.border[1], THEME.border[2], THEME.border[3], 1)
+        end)
+        historyRows[i] = row
+    end
+
+    historyEmptyLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    historyEmptyLabel:SetPoint("CENTER", historyListClip, "CENTER", 0, 0)
+    historyEmptyLabel:SetText("История пока пуста.")
+    historyEmptyLabel:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
+
+    historyListSlider = CreateFrame("Slider", nil, frame)
+    historyListSlider:SetPoint("TOPLEFT", historyListClip, "TOPRIGHT", 4, 0)
+    historyListSlider:SetPoint("BOTTOMLEFT", historyListClip, "BOTTOMRIGHT", 4, 0)
+    historyListSlider:SetWidth(14)
+    ApplyPanelStyle(historyListSlider, true)
+    historyListSlider:SetMinMaxValues(0, 0)
+    historyListSlider:SetValueStep(1)
+    historyListSlider:SetThumbTexture("Interface\\BUTTONS\\WHITE8X8")
+    local thumb = historyListSlider:GetThumbTexture()
+    if thumb then
+        thumb:SetWidth(10)
+        thumb:SetHeight(24)
+        thumb:SetVertexColor(0.60, 0.60, 0.60, 0.95)
+    end
+    historyListSlider:SetScript("OnValueChanged", function(_, value)
+        local rounded = math.floor(value + 0.5)
+        if rounded ~= historyScrollOffset then
+            historyScrollOffset = rounded
+            RefreshHistorySection()
+        end
+    end)
+
+    historyListClip:SetScript("OnMouseWheel", function(_, delta)
+        if not historyListSlider or not historyListSlider:IsShown() then return end
+        historyListSlider:SetValue(historyScrollOffset - delta)
+    end)
+
+    local clearBtn = CreateStyledButton(frame, 180, 26, "Очистить историю")
+    clearBtn:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 6, 10)
+    clearBtn:SetScript("OnClick", function()
+        if MPT.ClearRunHistory then
+            MPT:ClearRunHistory()
+        elseif MPT.db then
+            MPT.db.runs = {}
+        end
+        historyScrollOffset = 0
+        RefreshHistorySection()
+        if MPT.Print then
+            MPT:Print("История заходов очищена.")
+        end
+    end)
+
+    frame.contentHeight = 500
+    frame:SetHeight(frame.contentHeight)
+    RefreshHistorySection()
+end
+
 local function RefreshSections()
     -- Appearance dropdown values and preview lists
     if styleDD then
@@ -836,6 +1390,7 @@ local function RefreshSections()
     if sectionFrames.colors and sectionFrames.colors.rebuildRows then
         sectionFrames.colors.rebuildRows()
     end
+    RefreshHistorySection()
 end
 
 -- -----------------------------------------------------------------------------
@@ -932,6 +1487,7 @@ local function CreateWindow()
     addNavButton("general", "Общие", -28)
     addNavButton("appearance", "Стиль и отображение", -56)
     addNavButton("colors", "Цвета", -84)
+    addNavButton("history", "История заходов", -112)
 
     local contentWrap = CreateFrame("Frame", nil, cfg)
     contentWrap:SetPoint("TOPLEFT", cfg, "TOPLEFT", 204, -44)
@@ -1041,6 +1597,7 @@ local function CreateWindow()
     BuildAppearanceSection()
     BuildGeneralSection()
     BuildColorsSection()
+    BuildHistorySection()
     ShowSection("general")
 
     cfg:SetScript("OnShow", function()

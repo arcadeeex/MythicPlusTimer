@@ -75,7 +75,9 @@ local DB_DEFAULTS = {
     showForcesInTooltip = true,
     showForcesPullPct   = true,
     showBossRecord = true,
+    showOverpullPct = false,
     autoKeystone = false,
+    showKeystoneActions = true,
     reverseTimer = false,
     forcesTexture = "Blank",
     font = "Friz Quadrata (default)",
@@ -320,23 +322,6 @@ SlashCmdList["MPT"] = function(msg)
     elseif cmd == "preview" then
         MPT:ShowPreview()
 
-    elseif cmd == "findframes" then
-        -- Печатает видимые глобальные фреймы с "Scenario", "Tracker", "Challenge", "Objective" в имени
-        local found = 0
-        for k, v in pairs(_G) do
-            if type(k) == "string" and type(v) == "table" and type(v.IsShown) == "function" then
-                local lower = k:lower()
-                if lower:find("scenario") or lower:find("tracker") or lower:find("challenge") or lower:find("objective") then
-                    local ok, shown = pcall(function() return v:IsShown() end)
-                    if ok then
-                        MPT:Print(string.format("[%s] shown=%s", k, tostring(shown)))
-                        found = found + 1
-                    end
-                end
-            end
-        end
-        if found == 0 then MPT:Print("Ничего не найдено. Попробуй во время активного ключа.") end
-
     elseif cmd == "options" or cmd == "config" then
         if MPT.ToggleConfigWindow then
             MPT:ToggleConfigWindow()
@@ -345,6 +330,6 @@ SlashCmdList["MPT"] = function(msg)
         end
 
     else
-        MPT:Print("Команды: /mpt | debug | reset | timer | preview | findframes")
+        MPT:Print("Команды: /mpt | debug | reset | timer | preview")
     end
 end

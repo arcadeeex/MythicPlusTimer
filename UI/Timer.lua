@@ -26,6 +26,9 @@ local state = {
     wasPaused             = false,  -- для коррекции startTime при снятии паузы
 }
 
+-- Подмена live-данных для показа записи из истории в таймере.
+local historyRunPreview = nil
+
 -- Локальный счётчик смертей из ASMSG (fallback если GetDeathCount() не работает)
 local localDeathCount = 0
 local localDeathLost  = 0
@@ -36,6 +39,11 @@ local engagedGuids = {}
 
 -- Суммарный % прогресса engaged мобов (инкрементальный кэш)
 local engagedForcesTotal = 0
+
+-- Суммарный % за УБИТЫХ мобов за текущий заход (может быть >100 для перепула)
+local killedForcesTotal = 0
+-- GUID'ы мобов, уже учтённых в killedForcesTotal (защита от дублей UNIT_DIED/PARTY_KILL)
+local countedKillGuids = {}
 
 local function EngageGuid(guid, npcID)
     if not guid or not npcID or npcID == 0 then return end
@@ -58,6 +66,27 @@ end
 local function ClearEngaged()
     engagedGuids = {}
     engagedForcesTotal = 0
+end
+
+local function ResetKilledForces()
+    killedForcesTotal = 0
+    countedKillGuids = {}
+end
+
+local function AddKilledMobForces(guid, npcID)
+    if not guid or not npcID or npcID == 0 then return end
+    if countedKillGuids[guid] then return end
+    local pct = MPT:GetNpcForces(npcID)
+    if not pct or pct <= 0 then return end
+    countedKillGuids[guid] = true
+    killedForcesTotal = killedForcesTotal + pct
+    if MPT.charDb then
+        MPT.charDb.overpullKilledForces = killedForcesTotal
+    end
+end
+
+local function GetOverpullPct()
+    return math.max(0, (killedForcesTotal or 0) - 100)
 end
 
 -- ============================================================
@@ -197,14 +226,65 @@ local timeLimits = {
     [12] = { plus2 = 2160, plus3 = 1728 },  -- Ан'кахет: Старое Королевство (base 2700)
 }
 
+local function ResolveTimerLimitsForMap(mapID)
+    if type(mapID) ~= "number" then
+        return nil, nil, nil
+    end
+
+    local baseLimit, plus2Limit, plus3Limit = nil, nil, nil
+
+    if C_ChallengeMode and C_ChallengeMode.GetMapUIInfo then
+        local ok, _, _, r3, r4, r5 = pcall(function()
+            return C_ChallengeMode.GetMapUIInfo(mapID)
+        end)
+        if ok then
+            if type(r3) == "number" and r3 > 0 then baseLimit = r3 end
+            if type(r4) == "number" and r4 > 0 then plus2Limit = r4 end
+            if type(r5) == "number" and r5 > 0 then plus3Limit = r5 end
+        end
+    end
+
+    local static = timeLimits[mapID]
+    if not plus2Limit and static and type(static.plus2) == "number" then
+        plus2Limit = static.plus2
+    end
+    if not plus3Limit and static and type(static.plus3) == "number" then
+        plus3Limit = static.plus3
+    end
+
+    if not baseLimit and plus2Limit then
+        baseLimit = math.floor((plus2Limit / 0.80) + 0.5)
+    end
+    if not plus2Limit and baseLimit then
+        plus2Limit = math.floor((baseLimit * 0.80) + 0.5)
+    end
+    if not plus3Limit and baseLimit then
+        plus3Limit = math.floor((baseLimit * 0.64) + 0.5)
+    end
+
+    return baseLimit, plus2Limit, plus3Limit
+end
+
 local function GetPlus2Plus3Limits()
-    if not C_ChallengeMode then return nil, nil end
-    local ok, mapID = pcall(function() return C_ChallengeMode.GetActiveChallengeMapID() end)
-    if ok and type(mapID) == "number" then
-        local t = timeLimits[mapID]
-        if t then return t.plus2, t.plus3 end
+    local mapID = nil
+    if C_ChallengeMode and C_ChallengeMode.GetActiveChallengeMapID then
+        local ok, activeMap = pcall(function() return C_ChallengeMode.GetActiveChallengeMapID() end)
+        if ok and type(activeMap) == "number" then
+            mapID = activeMap
+        end
+    end
+    if not mapID and type(state) == "table" and type(state.mapID) == "number" then
+        mapID = state.mapID
+    end
+    local _, plus2Limit, plus3Limit = ResolveTimerLimitsForMap(mapID)
+    if plus2Limit or plus3Limit then
+        return plus2Limit, plus3Limit
     end
     return nil, nil
+end
+
+function MPT:GetMapTimerLimits(mapID)
+    return ResolveTimerLimitsForMap(tonumber(mapID) or mapID)
 end
 
 -- GetAffixInfo(id) → name [, description [, iconFileDataID]] (на Sirus может не работать)
@@ -257,6 +337,11 @@ local affixTooltipFrame
 local ShowAffixTooltip
 local SetForcesMode
 local NotifyDisplayChanged
+local HandleRunCompleted
+local GetDeathsSnapshot
+local GetDisplayForces
+local GetDisplayBattleResCount
+local GetDisplayPlus2Plus3Limits
 local lastDisplayedAffixIDs
 
 local frame = CreateFrame("Frame", "MPTTimerFrame", UIParent)
@@ -2335,19 +2420,11 @@ UpdateDisplay = function()
     pauseTex:SetTexture(pauseIcon)
     pauseSmallTex:SetTexture(pauseIcon)
 
-    -- Смерти: сначала пробуем API, fallback — локальный счётчик из ASMSG
-    local deathCount, deathLost = 0, 0
-    local dOk, d, t = pcall(function() return C_ChallengeMode.GetDeathCount() end)
-    if dOk and type(d) == "number" then
-        deathCount = d
-        deathLost  = type(t) == "number" and t or (d * 5)
-    else
-        deathCount = localDeathCount
-        deathLost  = localDeathLost
-    end
+    -- Смерти: live данные или подмена из превью записи истории
+    local deathCount, deathLost = GetDeathsSnapshot()
 
     -- Лимиты и эффективное время (elapsed + штраф смертей)
-    local limit2, limit3 = GetPlus2Plus3Limits()
+    local limit2, limit3 = GetDisplayPlus2Plus3Limits()
     local baseLimit       -- базовый лимит (для общего таймера)
     if limit2 and limit3 then
         -- base = limit2 / 0.80 (limit2 = 80% от base)
@@ -2809,7 +2886,7 @@ UpdateDisplay = function()
     end
 
     -- Прогресс (одно значение = %, 0-100)
-    local forces = GetForces()
+    local forces = GetDisplayForces()
     local useBar = (MPT.db and MPT.db.forcesBar) or secondStyle
     local arcadeForcesTitleHex = "|cff7b88a7"
     local hexForcesPct = RGBToHex(GetColor("colorForcesPct"))
@@ -2895,7 +2972,7 @@ UpdateDisplay = function()
 
     -- Боевые воскрешения (иконка сердца + число) — свой цвет для цифры БР
     local hexBattleRes = RGBToHex(GetColor("colorBattleRes"))
-    local brCount = GetBattleResCount()
+    local brCount = GetDisplayBattleResCount()
     frame.battleRes:SetText(hexBattleRes .. (brCount ~= nil and tostring(brCount) or "—") .. "|r")
     if secondStyle then
         if arcadeStyle then
@@ -2951,6 +3028,7 @@ local pollFrame = CreateFrame("Frame")
 local pollThrottle = 0
 -- nil = ещё не опрашивали (после PEW снова nil — первая итерация как «синхронизация»)
 local lastPollChallengeActive = nil
+local completionHandledForRun = false
 
 local function GetChallengeModeActive()
     if not C_ChallengeMode or not C_ChallengeMode.IsChallengeModeActive then return false end
@@ -2994,13 +3072,20 @@ pollFrame:SetScript("OnUpdate", function(_, elapsed)
 
     -- Внутри M+ инстанса, но ключ не активен: считаем забег завершённым/сброшенным.
     if not showUI then
-        if state.running or state.completed or frame:IsShown() then
+        if state.running then
+            if HandleRunCompleted then
+                HandleRunCompleted("POLL_CM_INACTIVE")
+            end
+            MPT:StopTimer(true)
+            frame:Hide()
+        elseif state.completed or frame:IsShown() then
             MPT:StopTimer(false)
             frame:Hide()
         end
         if MPT.charDb then
             MPT.charDb.keyStartUnix = nil
             MPT.charDb.bosses = nil
+            MPT.charDb.overpullKilledForces = nil
         end
         lastPollChallengeActive = cmActive
         return
@@ -3023,8 +3108,11 @@ pollFrame:SetScript("OnUpdate", function(_, elapsed)
         if MPT.charDb then
             MPT.charDb.keyStartUnix = nil
             MPT.charDb.bosses = nil
+            MPT.charDb.overpullKilledForces = nil
         end
+        completionHandledForRun = false
         state.completed = false
+        ResetKilledForces()
         if state.running then
             state.running = false
         end
@@ -3047,7 +3135,10 @@ pollFrame:SetScript("OnUpdate", function(_, elapsed)
     if cmActive and not state.running and not state.completed then
         MPT:StartTimer(false)
     elseif not cmActive and state.running then
-        MPT:StopTimer(false)
+        if HandleRunCompleted then
+            HandleRunCompleted("POLL_CM_FALSE")
+        end
+        MPT:StopTimer(true)
         frame:Hide()
     end
 
@@ -3088,12 +3179,152 @@ local function BuildRunSnapshot()
     }
 end
 
-local function GetDeathsSnapshot()
+GetDeathsSnapshot = function()
+    if type(historyRunPreview) == "table" then
+        local d = tonumber(historyRunPreview.deathCount) or 0
+        local t = tonumber(historyRunPreview.deathLost) or (d * 5)
+        return d, t
+    end
     local dOk, d, t = pcall(function() return C_ChallengeMode.GetDeathCount() end)
     if dOk and type(d) == "number" then
         return d, (type(t) == "number" and t or (d * 5))
     end
     return localDeathCount, localDeathLost
+end
+
+GetDisplayForces = function()
+    if type(historyRunPreview) == "table" and type(historyRunPreview.enemyForces) == "number" then
+        return historyRunPreview.enemyForces
+    end
+    return GetForces()
+end
+
+GetDisplayBattleResCount = function()
+    if type(historyRunPreview) == "table" and historyRunPreview.battleResCount ~= nil then
+        return historyRunPreview.battleResCount
+    end
+    return GetBattleResCount()
+end
+
+GetDisplayPlus2Plus3Limits = function()
+    if type(historyRunPreview) == "table" then
+        local p2 = tonumber(historyRunPreview.plus2Limit)
+        local p3 = tonumber(historyRunPreview.plus3Limit)
+        if p2 or p3 then
+            return p2, p3
+        end
+    end
+    return GetPlus2Plus3Limits()
+end
+
+local MAX_HISTORY_RUNS = 100
+
+local function EnsureRunHistoryTable()
+    if not MPT.db then return nil end
+    if type(MPT.db.runs) ~= "table" then
+        MPT.db.runs = {}
+    end
+    return MPT.db.runs
+end
+
+local function BuildCompletedRunHistoryEntry()
+    if state.running then
+        UpdateDisplay()
+    end
+    local snap = MPT:GetDisplayData()
+    if not snap then return nil end
+
+    local affixIds = nil
+    local affixNames = nil
+    if type(snap.affixes) == "table" and #snap.affixes > 0 then
+        affixIds = {}
+        affixNames = {}
+        for i, affixId in ipairs(snap.affixes) do
+            affixIds[i] = affixId
+            local name = GetAffixInfoSafe(affixId)
+            if type(name) == "string" and #name > 0 then
+                affixNames[i] = name
+            else
+                affixNames[i] = "#" .. tostring(affixId)
+            end
+        end
+    end
+
+    local bosses = nil
+    if type(snap.bosses) == "table" then
+        bosses = {}
+        for i, boss in ipairs(snap.bosses) do
+            bosses[i] = {
+                name = boss.name,
+                killed = boss.killed and true or false,
+                killTime = boss.killTime,
+            }
+        end
+    end
+
+    local partyMembers = {}
+    local function AddPartyUnit(unit)
+        if not UnitExists(unit) then return end
+        local name = UnitName(unit)
+        if not name or name == "" then return end
+        local _, classToken = UnitClass(unit)
+        partyMembers[#partyMembers + 1] = {
+            name = name,
+            class = classToken,
+        }
+    end
+    AddPartyUnit("player")
+    for i = 1, 4 do
+        AddPartyUnit("party" .. i)
+    end
+    if #partyMembers == 0 then
+        partyMembers = nil
+    end
+
+    local elapsed = tonumber(snap.elapsed) or 0
+    local deathLost = tonumber(snap.deathLost) or 0
+    local overpullPct = GetOverpullPct()
+    return {
+        completedAt = time(),
+        completed = true,
+        level = snap.level,
+        dungeonName = snap.dungeonName,
+        mapID = snap.mapID,
+        affixes = affixIds,
+        affixNames = affixNames,
+        elapsed = elapsed,
+        deathCount = tonumber(snap.deathCount) or 0,
+        deathLost = deathLost,
+        effectiveElapsed = elapsed + deathLost,
+        enemyForces = snap.enemyForces,
+        overpullPct = overpullPct,
+        forcesKilledTotal = killedForcesTotal,
+        battleResCount = snap.battleResCount,
+        partyMembers = partyMembers,
+        bosses = bosses,
+        styleId = snap.styleId,
+    }
+end
+
+local function SaveCompletedRunToHistory()
+    local runs = EnsureRunHistoryTable()
+    if not runs then return end
+    local entry = BuildCompletedRunHistoryEntry()
+    if not entry then return end
+    table.insert(runs, 1, entry)
+    while #runs > MAX_HISTORY_RUNS do
+        table.remove(runs, #runs)
+    end
+end
+
+HandleRunCompleted = function(_sourceTag, ...)
+    if completionHandledForRun then return end
+    completionHandledForRun = true
+
+    SaveCompletedRunToHistory()
+    if MPT.RefreshConfigWindow then
+        MPT:RefreshConfigWindow()
+    end
 end
 
 NotifyDisplayChanged = function()
@@ -3122,10 +3353,78 @@ function MPT:GetDisplayData()
     snap.isPaused = isPaused
     snap.deathCount = deathCount
     snap.deathLost = deathLost
-    snap.enemyForces = GetForces()
-    snap.battleResCount = GetBattleResCount()
-    snap.plus2Limit, snap.plus3Limit = GetPlus2Plus3Limits()
+    snap.enemyForces = GetDisplayForces()
+    snap.overpullPct = GetOverpullPct()
+    snap.forcesKilledTotal = killedForcesTotal
+    snap.battleResCount = GetDisplayBattleResCount()
+    snap.plus2Limit, snap.plus3Limit = GetDisplayPlus2Plus3Limits()
     return snap
+end
+
+function MPT:ShowHistoryRunOnTimer(entry)
+    if type(entry) ~= "table" then return end
+
+    historyRunPreview = {
+        deathCount = tonumber(entry.deathCount) or 0,
+        deathLost = tonumber(entry.deathLost) or 0,
+        enemyForces = tonumber(entry.enemyForces),
+        battleResCount = entry.battleResCount,
+        plus2Limit = tonumber(entry.plus2Limit),
+        plus3Limit = tonumber(entry.plus3Limit),
+    }
+
+    state.running = false
+    state.completed = true
+    state.elapsed = tonumber(entry.elapsed) or 0
+    state.startTime = GetTime() - state.elapsed
+    state.level = tonumber(entry.level) or entry.level
+    state.affixes = type(entry.affixes) == "table" and entry.affixes or nil
+    state.dungeonName = entry.dungeonName
+    state.mapID = tonumber(entry.mapID) or entry.mapID
+    state.encounterStartElapsed = nil
+    state.wasPaused = false
+    ClearEngaged()
+
+    if type(entry.bosses) == "table" then
+        state.bosses = {}
+        for i, b in ipairs(entry.bosses) do
+            state.bosses[i] = {
+                name = b.name,
+                killed = b.killed and true or false,
+                killTime = b.killTime,
+            }
+        end
+    else
+        state.bosses = nil
+    end
+
+    local lvlStr = state.level and ("+" .. tostring(state.level)) or "?"
+    local name = (state.mapID and shortDungeonName[state.mapID]) or state.dungeonName or ""
+    lastTitleText = string.format("%s%s %s|r", RGBToHex(GetColor("colorTitle")), lvlStr, name)
+    frame.title:SetText(lastTitleText)
+
+    self:RefreshAffixes(state.affixes)
+    if state.bosses and #state.bosses > 0 then
+        UpdateBossDisplay()
+    else
+        SetBossCount(0)
+    end
+    SetForcesMode(self.db and self.db.forcesBar or false)
+    self:ShowTimer()
+    UpdateDisplay()
+end
+
+function MPT:GetRunHistory()
+    local runs = EnsureRunHistoryTable()
+    return runs or {}
+end
+
+function MPT:ClearRunHistory()
+    if not self.db then return end
+    self.db.runs = {}
+    if self.RefreshConfigWindow then
+        self:RefreshConfigWindow()
+    end
 end
 
 function MPT:RegisterDisplayListener(callback)
@@ -3141,7 +3440,7 @@ end
 
 -- ============================================================
 -- Скрытие дефолтного M+ трекера Sirus
--- Имена фреймов определены экспериментально (/mpt findframes)
+-- Имена фреймов подобраны под типичный UI клиента
 -- ============================================================
 local sirusTrackerFrames = {
     "ScenarioObjectiveTrackerPoolFrame",
@@ -3377,10 +3676,13 @@ function MPT:RefreshForcesMode()
 end
 
 function MPT:StartTimer(forceNew)
+    historyRunPreview = nil
+    completionHandledForRun = false
     forceNew = forceNew == true
     if forceNew and self.charDb then
         self.charDb.keyStartUnix = nil
         self.charDb.bosses = nil
+        self.charDb.overpullKilledForces = nil
     end
     state.running   = true
     state.completed = false
@@ -3408,13 +3710,22 @@ function MPT:StartTimer(forceNew)
         if self.db and self.db.debug then
             self:Print("Таймер восстановлен после reload. Прошло: " .. FormatTime(elapsed))
         end
+        local restoredOverpull = self.charDb and tonumber(self.charDb.overpullKilledForces) or nil
+        if restoredOverpull then
+            killedForcesTotal = math.max(0, restoredOverpull)
+        else
+            local f = GetForces()
+            killedForcesTotal = (type(f) == "number" and f > 0) and f or 0
+        end
     else
         -- Новый ключ
         state.startTime = GetTime()
         state.elapsed   = 0
         if self.charDb then
             self.charDb.keyStartUnix = time()
+            self.charDb.overpullKilledForces = nil
         end
+        ResetKilledForces()
     end
 
     local lvl, affixes = GetKeystoneData()
@@ -3475,6 +3786,9 @@ function MPT:StartTimer(forceNew)
 end
 
 function MPT:StopTimer(completed)
+    if state.running then
+        historyRunPreview = nil
+    end
     state.running   = false
     state.completed = completed == true
     ClearEngaged()
@@ -3485,7 +3799,9 @@ function MPT:StopTimer(completed)
     if self.charDb then
         self.charDb.keyStartUnix = nil
         self.charDb.bosses       = nil
+        self.charDb.overpullKilledForces = nil
     end
+    ResetKilledForces()
     UpdateDisplay()
     if self.db and self.db.debug then
         self:Print(string.format("Таймер остановлен. time=%s completed=%s",
@@ -3513,6 +3829,9 @@ function MPT:ToggleTimer()
 end
 
 function MPT:ShowPreview()
+    historyRunPreview = nil
+    state.running = false
+    state.completed = false
     if collapsed then SetCollapsed(false) end
     self:LoadTimerPosition()
     local secondStyle = IsCustomStyle()
@@ -4239,6 +4558,9 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         end
 
     elseif event == "CHALLENGE_MODE_COMPLETED" then
+        if HandleRunCompleted then
+            HandleRunCompleted("CHALLENGE_MODE_COMPLETED", ...)
+        end
         MPT:StopTimer(true)
         frame:Hide()
 
@@ -4265,6 +4587,7 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
             if not previewActive and MPT.charDb then
                 MPT.charDb.keyStartUnix = nil
                 MPT.charDb.bosses = nil
+                MPT.charDb.overpullKilledForces = nil
             end
         end
 
@@ -4365,6 +4688,13 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         if eventType == "UNIT_DIED" or eventType == "PARTY_KILL" then
             -- Моб убит — убираем из engaged (вызываем всегда: если GUID не в таблице, DisengageGuid ничего не сделает)
             DisengageGuid(destGUID)
+            local npcID = GetNpcIdFromGUID(destGUID)
+            if npcID and npcID > 0 then
+                -- На некоторых событиях флаги могут быть nil, поэтому допускаем учёт по известному npcID.
+                if isHostileNpc(destFlags) or (MPT.IsNpcKnown and MPT:IsNpcKnown(npcID)) then
+                    AddKilledMobForces(destGUID, npcID)
+                end
+            end
         elseif eventType == "SWING_DAMAGE" or eventType == "SPELL_DAMAGE"
             or eventType == "RANGE_DAMAGE" or eventType == "SPELL_PERIODIC_DAMAGE" then
             -- Первый хит по мобу — считаем его вступившим в бой
