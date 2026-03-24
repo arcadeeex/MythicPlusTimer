@@ -54,14 +54,29 @@ local function ExtractKeystoneDungeonName(itemName)
 end
 
 local function GetCurrentDungeonName()
-    local instanceName = GetInstanceInfo()
-    if type(instanceName) == "string" and instanceName ~= "" then
-        return instanceName
+    -- Склеиваем имя инстанса, подзону и зону: например «Цитадель Адского Пламени: Бастионы»
+    -- при ключе «Бастионы Адского Пламени» — слова совпадают по токенам после разбора.
+    local parts = {}
+    local seen = {}
+    local function add(s)
+        if type(s) ~= "string" or s == "" then return end
+        if seen[s] then return end
+        seen[s] = true
+        parts[#parts + 1] = s
     end
-    -- Fallback when instance API is temporarily empty right after zoning.
+    local instanceName = select(1, GetInstanceInfo())
+    add(instanceName)
+    if GetSubZoneText then
+        add(GetSubZoneText())
+    end
+    if GetZoneText then
+        add(GetZoneText())
+    end
     if GetRealZoneText then
-        local z = GetRealZoneText()
-        if type(z) == "string" and z ~= "" then return z end
+        add(GetRealZoneText())
+    end
+    if #parts > 0 then
+        return table.concat(parts, " ")
     end
     return nil
 end
@@ -123,12 +138,15 @@ end
 local function BuildTokenSet(s)
     local out = {}
     if type(s) ~= "string" or s == "" then return out end
-    -- Keep only letters/digits/spaces to handle separators like ":" and "-".
-    s = s:gsub("[^%w%s]+", " ")
+    -- В Lua 5.1 класс %w не включает кириллицу; gsub "[^%w%s]" вырезал бы все русские буквы.
+    -- Разделяем по знакам препинания и пробелам (%p + %s).
+    s = s:gsub("[%p%s]+", " ")
+    s = s:gsub("%s+", " ")
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
     for token in s:gmatch("%S+") do
-        -- Skip tiny tokens/noise.
-        if #token >= 3 then
-            out[token] = true
+        local t = token:lower()
+        if #t >= 3 then
+            out[t] = true
         end
     end
     return out
@@ -138,6 +156,7 @@ local function IsKeystoneForCurrentLocation(itemLink)
     if type(itemLink) ~= "string" or itemLink == "" then return false, nil, nil end
     local itemName = itemLink:match("%[(.-)%]") or itemLink
     local dungeonName = ExtractKeystoneDungeonName(itemName)
+
     if not dungeonName then
         return false, nil, nil
     end
@@ -168,6 +187,35 @@ local function IsKeystoneForCurrentLocation(itemLink)
                 end
             end
             matched = wantedCount > 0 and matchedCount == wantedCount
+        end
+
+        -- «Цитадель Адского Пламени: Бастионы» (инстанс) vs «Бастионы Адского Пламени» (ключ):
+        -- подстроки не совпадают, токены после исправления BuildTokenSet должны совпасть;
+        -- запасной вариант — явные подстроки (кириллица без единого регистра).
+        if not matched then
+            local function hasBoth(hay, a, b)
+                return type(hay) == "string"
+                    and hay:find(a, 1, true)
+                    and hay:find(b, 1, true)
+            end
+            local function ruHellfireBastionsWing(s)
+                if type(s) ~= "string" then return false end
+                local a = s:find("адского", 1, true) or s:find("Адского", 1, true)
+                local p = s:find("пламени", 1, true) or s:find("Пламени", 1, true)
+                local b = s:find("бастион", 1, true) or s:find("Бастион", 1, true)
+                return a and p and b
+            end
+            if ruHellfireBastionsWing(dungeonName) and ruHellfireBastionsWing(currentDungeon) then
+                matched = true
+            elseif hasBoth(wanted, "hellfire", "citadel") and hasBoth(nCurrent, "hellfire", "citadel") then
+                matched = true
+            elseif hasBoth(wanted, "hellfire", "bastion") and hasBoth(nCurrent, "hellfire", "bastion") then
+                matched = true
+            elseif hasBoth(wanted, "hellfire", "bastion") and hasBoth(nCurrent, "hellfire", "citadel") then
+                matched = true
+            elseif hasBoth(wanted, "hellfire", "citadel") and hasBoth(nCurrent, "hellfire", "bastion") then
+                matched = true
+            end
         end
     end
     return matched, dungeonName, currentDungeon
