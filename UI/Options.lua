@@ -244,16 +244,16 @@ optInitFrame:SetScript("OnEvent", function(self)
     checkHeader:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -20)
     checkHeader:SetText("Общее")
 
-    -- Чекбокс: Показать рекорд подземелья
+    -- Чекбокс: Показать время боя с боссом
     local recordCheck = CreateFrame("CheckButton", "MPTDungeonRecordCheck", panel, "InterfaceOptionsSmallCheckButtonTemplate")
     recordCheck:SetPoint("TOPLEFT", checkHeader, "BOTTOMLEFT", -2, -8)
 
     local recordCheckText = _G["MPTDungeonRecordCheckText"]
     if recordCheckText then
-        recordCheckText:SetText("Показывать рекорд подземелья")
+        recordCheckText:SetText("Показывать время боя с боссом")
     end
-    recordCheck.tooltipText = "Рекорд подземелья"
-    recordCheck.tooltipRequirement = "Показывать строку с рекордом и отклонением возле убитого босса"
+    recordCheck.tooltipText = "Время боя с боссом"
+    recordCheck.tooltipRequirement = "Показывать рядом с убитым боссом длительность боя от ENCOUNTER_START до ENCOUNTER_END"
 
     recordCheck:HookScript("OnClick", function(check)
         if MPT.db then

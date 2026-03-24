@@ -925,7 +925,7 @@ local function BuildGeneralSection()
 
     local rows = {
         { label = "Закрепить окно", key = "locked" },
-        { label = "Показывать рекорд подземелья", key = "showBossRecord", onApply = function()
+        { label = "Показывать время боя с боссом", key = "showBossRecord", onApply = function()
             if MPT.IsPreviewActive and MPT:IsPreviewActive() and MPT.ShowPreview then MPT:ShowPreview() end
         end },
         { label = "Показывать процент перепула", key = "showOverpullPct", onApply = function()

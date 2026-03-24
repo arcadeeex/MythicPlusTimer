@@ -347,6 +347,8 @@ local lastDisplayedAffixIDs
 local frame = CreateFrame("Frame", "MPTTimerFrame", UIParent)
 frame:SetWidth(280)
 local ARCADE_WIDTH = 300
+-- Second style («Panel»): шире дефолтных 320px — длинные имена боссов (кириллица), напр. Гарголмар.
+local SECOND_STYLE_PANEL_W = 340
 -- Высота задаётся в SetBossCount; начальная — компактная (0 боссов)
 local COMPACT_HEIGHT = 172  -- пересчитано при BOSS_LINE_HEIGHT=30
 frame:SetHeight(COMPACT_HEIGHT)
@@ -2017,15 +2019,15 @@ local function UpdateBossLayout(count, bossTopY)
         local timerBarTop = IsArcadeStyle() and -56 or -24
         local bossTop = timerBarTop - (IsArcadeStyle() and 40 or 23)
         local arcadeStyle = IsArcadeStyle()
-        local showRecord = true
+        local showFightTime = true
         if MPT.db and MPT.db.showBossRecord ~= nil then
-            showRecord = not not MPT.db.showBossRecord
+            showFightTime = not not MPT.db.showBossRecord
         end
         local rightW = 118
         local leftW = math.max(110, frame:GetWidth() - rightW - 18)
         local killW, deltaW, colGap = 46, 40, 8
         if arcadeStyle then
-            if showRecord then
+            if showFightTime then
                 leftW = math.max(110, frame:GetWidth() - (killW + deltaW + colGap) - 20)
             else
                 leftW = math.max(110, frame:GetWidth() - killW - 20)
@@ -2085,7 +2087,7 @@ local function UpdateBossLayout(count, bossTopY)
                 local rightDelta = frame.bossRightDeltaLines[i]
                 local rightKill = frame.bossRightKillLines[i]
                 rightKill:ClearAllPoints()
-                if showRecord then
+                if showFightTime then
                     rightDelta:ClearAllPoints()
                     rightDelta:SetPoint("RIGHT", rowBg, "RIGHT", -10, 0)
                     rightDelta:SetWidth(deltaW)
@@ -2489,7 +2491,7 @@ UpdateDisplay = function()
     end
 
     if secondStyle then
-        frame:SetWidth(arcadeStyle and ARCADE_WIDTH or 320)
+        frame:SetWidth(arcadeStyle and ARCADE_WIDTH or SECOND_STYLE_PANEL_W)
         local arcadeFontPath = GetArcadeFontPath()
         local bgr, bgg, bgb = GetColor("colorBackground")
         if arcadeStyle then
@@ -3839,7 +3841,7 @@ function MPT:ShowPreview()
     local arcadeFontPath = GetArcadeFontPath()
 
     if secondStyle then
-        frame:SetWidth(arcadeStyle and ARCADE_WIDTH or 320)
+        frame:SetWidth(arcadeStyle and ARCADE_WIDTH or SECOND_STYLE_PANEL_W)
         local arcadeFontPath = GetArcadeFontPath()
         local bgr, bgg, bgb = GetColor("colorBackground")
         if arcadeStyle then
@@ -4142,28 +4144,27 @@ function MPT:ShowPreview()
     local previewDungeon = "Кузня Крови"
     local previewBossList = self:GetDungeonBosses(previewDungeon) or {}
     local previewTexts = {}
-    local showRecord = true
+    local showFightTime = true
     if MPT.db and MPT.db.showBossRecord ~= nil then
-        showRecord = not not MPT.db.showBossRecord
+        showFightTime = not not MPT.db.showBossRecord
     end
     local hexBossKilled = RGBToHex(GetColor("colorBossKilled"))
     local hexBossPending = RGBToHex(GetColor("colorBossPending"))
     for j, bossName in ipairs(previewBossList) do
         if j == 1 then
-            -- Время убийства от старта ключа; рекорд 4:01, текущий 3:41 = -0:20
+            -- Время убийства от старта ключа + время боя босса
             if secondStyle then
                 if arcadeStyle then
                     local hexNameDone = "|cff9aa7bb"
                     local hexTimeDone = "|cff7b88a7"
-                    local hexGood = "|cff58ff96"
-                    previewTexts[j] = { left = string.format("%s%s|r", hexNameDone, bossName), kill = string.format("%s2:03|r", hexTimeDone), delta = string.format("%s-0:20|r", hexGood) }
-                elseif showRecord then
-                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s-0:20  3:41|r", hexBossKilled) }
+                    previewTexts[j] = { left = string.format("%s%s|r", hexNameDone, bossName), kill = string.format("%s2:03|r", hexTimeDone), delta = string.format("%s3:21|r", hexTimeDone) }
+                elseif showFightTime then
+                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s3:21  3:41|r", hexBossKilled) }
                 else
                     previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s3:41|r", hexBossKilled) }
                 end
-            elseif showRecord then
-                previewTexts[j] = string.format("%s[+] %s  3:41 (Рекорд 4:01, -0:20)|r", hexBossKilled, bossName)
+            elseif showFightTime then
+                previewTexts[j] = string.format("%s[+] %s  3:41 (Время боя 3:21)|r", hexBossKilled, bossName)
             else
                 previewTexts[j] = string.format("%s[+] %s  3:41|r", hexBossKilled, bossName)
             end
@@ -4172,16 +4173,14 @@ function MPT:ShowPreview()
                 if arcadeStyle then
                     local hexNameDone = "|cff9aa7bb"
                     local hexTimeDone = "|cff7b88a7"
-                    local hexBad = "|cffff6a6a"
-                    previewTexts[j] = { left = string.format("%s%s|r", hexNameDone, bossName), kill = string.format("%s4:51|r", hexTimeDone), delta = string.format("%s+0:07|r", hexBad) }
-                elseif showRecord then
-                    local hexBad = RGBToHex(GetColor("colorTimerFailed"))
-                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s+0:07  7:22|r", hexBad) }
+                    previewTexts[j] = { left = string.format("%s%s|r", hexNameDone, bossName), kill = string.format("%s4:51|r", hexTimeDone), delta = string.format("%s2:31|r", hexTimeDone) }
+                elseif showFightTime then
+                    previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s2:31  7:22|r", hexBossKilled) }
                 else
                     previewTexts[j] = { left = string.format("%s%s|r", hexBossKilled, bossName), right = string.format("%s7:22|r", hexBossKilled) }
                 end
-            elseif showRecord then
-                previewTexts[j] = string.format("%s[+] %s  7:22 (Рекорд 7:15, +0:07)|r", hexBossKilled, bossName)
+            elseif showFightTime then
+                previewTexts[j] = string.format("%s[+] %s  7:22 (Время боя 2:31)|r", hexBossKilled, bossName)
             else
                 previewTexts[j] = string.format("%s[+] %s  7:22|r", hexBossKilled, bossName)
             end
@@ -4214,7 +4213,7 @@ function MPT:ShowPreview()
                 frame.bossRightKillLines[i]:SetText(previewTexts[i].kill or "|cff7b88a7--|r")
                 frame.bossRightDeltaLines[i]:SetText(previewTexts[i].delta or "|cff7b88a7--|r")
                 frame.bossRightKillLines[i]:Show()
-                frame.bossRightDeltaLines[i]:SetShown(showRecord)
+                frame.bossRightDeltaLines[i]:SetShown(showFightTime)
             else
                 frame.bossRightLines[i]:SetText(previewTexts[i].right)
                 frame.bossRightLines[i]:Show()
@@ -4328,58 +4327,42 @@ local function ParseEncounterState(msg)
 end
 
 -- ============================================================
--- Рекорды боссов: лучшее время убийства от старта ключа (kt в секундах).
--- Хранятся в MPT.db.bossRecords[dungeonName][keystoneLevel][bossName] = { kt = killTime }
+-- Время боя босса: длительность боя от ENCOUNTER_START до ENCOUNTER_END/kill.
+-- Хранится в state.bosses[i].fightTime (секунды).
 -- ============================================================
-local function GetBossRecord(bossName)
-    if not MPT.db or not MPT.db.bossRecords then return nil end
-    local dn = tostring(state.dungeonName)
-    local lv = tonumber(state.level) or 0
-    if lv <= 0 then return end
-    if not dn or not lv then return nil end
-    local dr = MPT.db.bossRecords[dn]
-    local lr = dr and dr[lv]
-    return lr and lr[bossName] or nil
-end
-
-local function UpdateBossRecord(bossName, killTime)
-    if not MPT.db or not state.dungeonName or not state.level then return end
-    if not killTime or killTime < 0 then return end
-    if not MPT.db.bossRecords then MPT.db.bossRecords = {} end
-    local records = MPT.db.bossRecords
-    local dn = state.dungeonName
-    local lv = state.level
-    if not records[dn] then records[dn] = {} end
-    local dnRec = records[dn]
-    if not dnRec[lv] then dnRec[lv] = {} end
-    local lvRec = dnRec[lv]
-    local rec = lvRec[bossName]
-    if not rec then
-        lvRec[bossName] = { kt = killTime }
-    elseif not rec.kt or killTime < rec.kt then
-        rec.kt = killTime
+local function GetLiveElapsed()
+    if state and state.startTime then
+        return math.max(0, GetTime() - state.startTime)
     end
+    return tonumber(state and state.elapsed) or 0
 end
 
--- Форматирует отклонение от рекорда: -0:20 (быстрее рекорда) или +0:04 (медленнее)
-local function FormatDelta(currentKillTime, recordKillTime)
-    local delta = currentKillTime - recordKillTime
-    local sign  = delta >= 0 and "+" or "-"
-    local abs   = math.abs(delta)
-    return sign .. string.format("%d:%02d", math.floor(abs / 60), math.floor(abs % 60))
+local function CaptureFightTimeForBossName(bossName, elapsedNow)
+    if not state or not state.bosses or not bossName then return nil end
+    local startElapsed = tonumber(state.encounterStartElapsed)
+    if not startElapsed then return nil end
+    elapsedNow = tonumber(elapsedNow) or GetLiveElapsed()
+    if elapsedNow < startElapsed then return nil end
+    local ft = math.max(0, elapsedNow - startElapsed)
+    for _, boss in ipairs(state.bosses) do
+        if boss.name == bossName then
+            boss.fightTime = ft
+            return ft
+        end
+    end
+    return nil
 end
 
 UpdateBossDisplay = function()
     if not state.bosses or #state.bosses == 0 then return end
     local secondStyle = IsCustomStyle()
     local arcadeStyle = IsArcadeStyle()
-    local showRecord = true
+    local showFightTime = true
     if MPT.db and MPT.db.showBossRecord ~= nil then
-        showRecord = not not MPT.db.showBossRecord
+        showFightTime = not not MPT.db.showBossRecord
     end
     local hexKilled = RGBToHex(GetColor("colorBossKilled"))
     local hexPending = RGBToHex(GetColor("colorBossPending"))
-    local hexFailed = RGBToHex(GetColor("colorTimerFailed"))
     local arcadeFontPath = arcadeStyle and GetArcadeFontPath() or "Fonts\\FRIZQT__.TTF"
     local count = math.min(#state.bosses, MAX_BOSSES)
     for i = 1, count do
@@ -4388,7 +4371,7 @@ UpdateBossDisplay = function()
             if arcadeStyle then
                 frame.bossRightLines[i]:Hide()
                 frame.bossRightKillLines[i]:Show()
-                frame.bossRightDeltaLines[i]:SetShown(showRecord)
+                frame.bossRightDeltaLines[i]:SetShown(showFightTime)
                 frame.bossStatusIcons[i]:Show()
             else
                 frame.bossRightLines[i]:Show()
@@ -4416,47 +4399,49 @@ UpdateBossDisplay = function()
         local rightText = ""
         local rightKillText = ""
         local rightDeltaText = ""
-        local rec = GetBossRecord(boss.name)
         if boss.killed then
             local kt = boss.killTime
             if kt then
                 local ktStr = FormatTime(kt)
-                if rec and rec.kt and showRecord then
-                    if secondStyle then
-                        if arcadeStyle then
-                            local delta = FormatDelta(kt, rec.kt)
-                            local isSlower = (kt - rec.kt) > 0
-                            local hexNameDone = "|cff9aa7bb"
-                            local hexTimeDone = "|cff7b88a7"
-                            local hexDelta = isSlower and "|cffff6a6a" or "|cff58ff96"
-                            line = string.format("%s%s|r", hexNameDone, boss.name)
-                            rightKillText = string.format("%s%s|r", hexTimeDone, ktStr)
-                            rightDeltaText = string.format("%s%s|r", hexDelta, delta)
+                local fightTimeStr = nil
+                if type(boss.fightTime) == "number" then
+                    fightTimeStr = FormatTime(boss.fightTime)
+                end
+                if secondStyle then
+                    if arcadeStyle then
+                        local hexNameDone = "|cff9aa7bb"
+                        local hexTimeDone = "|cff7b88a7"
+                        line = string.format("%s%s|r", hexNameDone, boss.name)
+                        if showFightTime then
+                            if fightTimeStr then
+                                rightKillText = string.format("%s%s|r", hexTimeDone, ktStr)
+                                rightDeltaText = string.format("%s%s|r", hexTimeDone, fightTimeStr)
+                            else
+                                -- Если время боя недоступно: без прочерков, время убийства показываем справа.
+                                rightKillText = ""
+                                rightDeltaText = string.format("%s%s|r", hexTimeDone, ktStr)
+                            end
                         else
-                            local delta = FormatDelta(kt, rec.kt)
-                            local isSlower = (kt - rec.kt) > 0
-                            local rightColor = isSlower and hexFailed or hexKilled
-                            line = string.format("%s%s|r", hexKilled, boss.name)
-                            rightText = string.format("%s%s|r %s%s|r", rightColor, delta, rightColor, ktStr)
+                            rightKillText = string.format("%s%s|r", hexTimeDone, ktStr)
+                            rightDeltaText = ""
                         end
                     else
-                        local delta = FormatDelta(kt, rec.kt)
-                        line = string.format("%s[+] %s  %s (Рекорд %s, %s)|r",
-                            hexKilled, boss.name, ktStr, FormatTime(rec.kt), delta)
-                    end
-                else
-                    if secondStyle then
-                        if arcadeStyle then
-                            local hexNameDone = "|cff9aa7bb"
-                            local hexTimeDone = "|cff7b88a7"
-                            line = string.format("%s%s|r", hexNameDone, boss.name)
-                            rightKillText = string.format("%s%s|r", hexTimeDone, ktStr)
-                            rightDeltaText = "|cff7b88a7--|r"
+                        line = string.format("%s%s|r", hexKilled, boss.name)
+                        if showFightTime then
+                            if fightTimeStr then
+                                rightText = string.format("%s%s  %s|r", hexKilled, fightTimeStr, ktStr)
+                            else
+                                -- Если времени боя нет — оставляем поле времени боя пустым (без прочерков).
+                                rightText = string.format("%s%s|r", hexKilled, ktStr)
+                            end
                         else
-                            line = string.format("%s%s|r", hexKilled, boss.name)
-                            -- showBossRecord=false: keep only kill time, always green
                             rightText = string.format("%s%s|r", hexKilled, ktStr)
                         end
+                    end
+                else
+                    if showFightTime and fightTimeStr then
+                        line = string.format("%s[+] %s  %s (Время боя %s)|r",
+                            hexKilled, boss.name, ktStr, fightTimeStr)
                     else
                         line = string.format("%s[+] %s  %s|r", hexKilled, boss.name, ktStr)
                     end
@@ -4483,11 +4468,7 @@ UpdateBossDisplay = function()
                     rightDeltaText = "|cff7b88a7--|r"
                 else
                     line = string.format("%s%s|r", hexPending, boss.name)
-                    if showRecord and rec and rec.kt then
-                        rightText = hexPending .. FormatTime(rec.kt) .. "|r"
-                    else
-                        rightText = ""
-                    end
+                    rightText = ""
                 end
             else
                 line = string.format("%s[ ] %s|r", hexPending, boss.name)
@@ -4506,7 +4487,7 @@ UpdateBossDisplay = function()
                 frame.bossRightKillLines[i]:SetText(rightKillText)
                 frame.bossRightDeltaLines[i]:SetText(rightDeltaText)
                 frame.bossRightKillLines[i]:Show()
-                frame.bossRightDeltaLines[i]:SetShown(showRecord)
+                frame.bossRightDeltaLines[i]:SetShown(showFightTime)
                 if frame.bossStatusIcons[i] then
                     if boss.killed then
                         frame.bossStatusIcons[i]:SetVertexColor(0.62, 1.00, 0.70, 1)
@@ -4644,23 +4625,24 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "ENCOUNTER_START" then
         -- args: encounterID, encounterName, difficultyID, groupSize
         if state.running then
-            state.encounterStartElapsed = state.elapsed
+            state.encounterStartElapsed = GetLiveElapsed()
             if MPT.db and MPT.db.debug then
                 local _, encName = ...
                 MPT:Print("ENCOUNTER_START: " .. tostring(encName)
-                    .. "  elapsed=" .. FormatTime(state.elapsed))
+                    .. "  elapsed=" .. FormatTime(state.encounterStartElapsed))
             end
         end
 
     elseif event == "ENCOUNTER_END" then
         -- args: encounterID, encounterName, difficultyID, groupSize, success (1=kill, 0=wipe)
-        local _, _, _, _, success = ...
+        local _, encounterName, _, _, success = ...
         -- При любом исходе (убийство или вайп) зачищаем engaged мобов:
         -- при убийстве — мобы комнаты мертвы; при вайпе — начинаем заново
         ClearEngaged()
-        if success ~= 1 then
-            state.encounterStartElapsed = nil
+        if success == 1 and type(encounterName) == "string" and encounterName ~= "" then
+            CaptureFightTimeForBossName(encounterName, GetLiveElapsed())
         end
+        state.encounterStartElapsed = nil
 
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         if not state.running then return end
@@ -4712,10 +4694,11 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
                     boss.killed   = true
                     -- GetTime() даёт актуальное значение прямо сейчас, а не из прошлого OnUpdate-кадра
                     boss.killTime = state.startTime and (GetTime() - state.startTime) or state.elapsed
-                    UpdateBossRecord(boss.name, boss.killTime)
+                    CaptureFightTimeForBossName(boss.name, boss.killTime)
                     break
                 end
             end
+            state.encounterStartElapsed = nil
             UpdateBossDisplay()
         end
     end
