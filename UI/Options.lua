@@ -599,9 +599,18 @@ optInitFrame:SetScript("OnEvent", function(self)
         if MPT.db then
             MPT.db.scale = value
         end
+        -- Новый источник правды для таймера — style options (LoadTimerPosition читает именно его).
+        if MPT.SetStyleOption then
+            MPT:SetStyleOption("scale", value)
+        end
         local timerFrame = _G["MPTTimerFrame"]
         if timerFrame then
-            timerFrame:SetScale(value)
+            local actualScale = value
+            if MPT.GetActiveStyleId and MPT:GetActiveStyleId() == "arcade" then
+                -- Sync with Timer.LoadTimerPosition(): arcade uses additional 0.9 factor.
+                actualScale = value * 0.9
+            end
+            timerFrame:SetScale(actualScale)
         end
     end)
 
@@ -628,7 +637,12 @@ optInitFrame:SetScript("OnEvent", function(self)
         UpdateTexDropFromDB()
         UpdateFontDropFromDB()
 
-        local scale = (MPT.db and MPT.db.scale) or 1.0
+        local scale = 1.0
+        if MPT.GetStyleOption then
+            scale = MPT:GetStyleOption("scale", (MPT.db and MPT.db.scale) or 1.0)
+        else
+            scale = (MPT.db and MPT.db.scale) or 1.0
+        end
         scaleLabel:SetText(string.format("%.1f", scale))
         scaleSlider:SetValue(scale)
 

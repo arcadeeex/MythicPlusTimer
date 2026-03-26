@@ -896,7 +896,14 @@ local function BuildAppearanceSection()
         SetStyleOption("scale", value)
         if scaleValue then scaleValue:SetText(string.format("%.1f", value)) end
         local timerFrame = _G["MPTTimerFrame"]
-        if timerFrame then timerFrame:SetScale(value) end
+        if timerFrame then
+            local actualScale = value
+            if MPT.GetActiveStyleId and MPT:GetActiveStyleId() == "arcade" then
+                -- Sync with Timer.LoadTimerPosition(): arcade uses additional 0.9 factor.
+                actualScale = value * 0.9
+            end
+            timerFrame:SetScale(actualScale)
+        end
     end)
 
     scaleValue = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")

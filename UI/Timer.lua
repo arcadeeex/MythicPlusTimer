@@ -372,8 +372,15 @@ end
 
 SaveTimerPosition = function()
     if not MPT.charDb then return end
-    local x = frame:GetLeft() or 0
-    local y = frame:GetTop() or 0
+    -- Сохраняем именно оффсеты якоря, а не GetLeft/GetTop:
+    -- left/top зависят от текущего масштаба/размера и могут "плыть" между стилями/персонажами.
+    local point, relativeTo, relativePoint, xOfs, yOfs = frame:GetPoint(1)
+    local x = tonumber(xOfs)
+    local y = tonumber(yOfs)
+    if x == nil or y == nil then
+        x = frame:GetLeft() or 0
+        y = frame:GetTop() or 0
+    end
     local sid = GetCurrentStyleId()
     if type(MPT.charDb.timerPosByStyle) ~= "table" then
         MPT.charDb.timerPosByStyle = {}
