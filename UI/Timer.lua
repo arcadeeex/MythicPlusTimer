@@ -23,6 +23,11 @@ local state = {
     mapID                 = nil,  -- C_ChallengeMode.GetActiveChallengeMapID()
     bosses                = nil,  -- list of {name, killed, killTime}  killTime = elapsed от старта ключа при убийстве
     encounterStartElapsed = nil,  -- elapsed при ENCOUNTER_START текущего боя
+    encounterStartBossName = nil, -- каноническое имя босса для текущего ENCOUNTER_START
+    encounterStartBossIndex = nil, -- индекс босса в state.bosses для текущего ENCOUNTER_START
+    lastEncounterEndElapsed = nil, -- elapsed последнего ENCOUNTER_END
+    lastEncounterBossName = nil,   -- имя босса из последнего ENCOUNTER_START/END
+    lastEncounterFightTime = nil,  -- длительность последнего энкаунтера
     wasPaused             = false,  -- для коррекции startTime при снятии паузы
 }
 
@@ -3039,6 +3044,23 @@ local pollThrottle = 0
 local lastPollChallengeActive = nil
 local completionHandledForRun = false
 
+local function ExitHistoryPreviewForLiveRun()
+    if type(historyRunPreview) == "table" then
+        historyRunPreview = nil
+    end
+    if state and state.completed and not state.running then
+        state.completed = false
+    end
+    if state then
+        state.encounterStartElapsed = nil
+        state.encounterStartBossName = nil
+        state.encounterStartBossIndex = nil
+        state.lastEncounterEndElapsed = nil
+        state.lastEncounterBossName = nil
+        state.lastEncounterFightTime = nil
+    end
+end
+
 local function GetChallengeModeActive()
     if not C_ChallengeMode or not C_ChallengeMode.IsChallengeModeActive then return false end
     local ok, v = pcall(function() return C_ChallengeMode.IsChallengeModeActive() end)
@@ -3101,6 +3123,10 @@ pollFrame:SetScript("OnUpdate", function(_, elapsed)
     end
 
     -- showUI == true: мы в M+ инстансе и (cmActive или экран completed)
+    if cmActive then
+        ExitHistoryPreviewForLiveRun()
+    end
+
     if lastPollChallengeActive == nil then
         lastPollChallengeActive = cmActive
         if cmActive and not state.running and not state.completed then
@@ -3171,6 +3197,7 @@ local function BuildRunSnapshot()
                 name = b.name,
                 killed = b.killed and true or false,
                 killTime = b.killTime,
+                fightTime = b.fightTime,
             }
         end
     end
@@ -3267,6 +3294,7 @@ local function BuildCompletedRunHistoryEntry()
                 name = boss.name,
                 killed = boss.killed and true or false,
                 killTime = boss.killTime,
+                fightTime = boss.fightTime,
             }
         end
     end
@@ -3391,6 +3419,11 @@ function MPT:ShowHistoryRunOnTimer(entry)
     state.dungeonName = entry.dungeonName
     state.mapID = tonumber(entry.mapID) or entry.mapID
     state.encounterStartElapsed = nil
+    state.encounterStartBossName = nil
+    state.encounterStartBossIndex = nil
+    state.lastEncounterEndElapsed = nil
+    state.lastEncounterBossName = nil
+    state.lastEncounterFightTime = nil
     state.wasPaused = false
     ClearEngaged()
 
@@ -3401,6 +3434,7 @@ function MPT:ShowHistoryRunOnTimer(entry)
                 name = b.name,
                 killed = b.killed and true or false,
                 killTime = b.killTime,
+                fightTime = b.fightTime,
             }
         end
     else
@@ -3695,6 +3729,12 @@ function MPT:StartTimer(forceNew)
     end
     state.running   = true
     state.completed = false
+    state.encounterStartElapsed = nil
+    state.encounterStartBossName = nil
+    state.encounterStartBossIndex = nil
+    state.lastEncounterEndElapsed = nil
+    state.lastEncounterBossName = nil
+    state.lastEncounterFightTime = nil
     ClearEngaged()
     if self.db and self.db.hideDefaultTracker then
         HideSirusTracker()
@@ -3800,6 +3840,12 @@ function MPT:StopTimer(completed)
     end
     state.running   = false
     state.completed = completed == true
+    state.encounterStartElapsed = nil
+    state.encounterStartBossName = nil
+    state.encounterStartBossIndex = nil
+    state.lastEncounterEndElapsed = nil
+    state.lastEncounterBossName = nil
+    state.lastEncounterFightTime = nil
     ClearEngaged()
     if self.db and self.db.hideDefaultTracker then
         RestoreSirusTracker()
@@ -4328,6 +4374,7 @@ end
 local function ParseEncounterState(msg)
     local bosses = {}
     for name, status in msg:gmatch("([^;]+);(%d+)") do
+        name = type(name) == "string" and name:match("^%s*(.-)%s*$") or name
         table.insert(bosses, { name = name, killed = (status ~= "0") })
     end
     return bosses
@@ -4351,13 +4398,270 @@ local function CaptureFightTimeForBossName(bossName, elapsedNow)
     elapsedNow = tonumber(elapsedNow) or GetLiveElapsed()
     if elapsedNow < startElapsed then return nil end
     local ft = math.max(0, elapsedNow - startElapsed)
-    for _, boss in ipairs(state.bosses) do
-        if boss.name == bossName then
-            boss.fightTime = ft
-            return ft
+    local function norm(s)
+        if type(s) ~= "string" then return nil end
+        s = s:lower()
+        s = s:gsub("ё", "е")
+        s = s:gsub("^%s+", ""):gsub("%s+$", "")
+        s = s:gsub("%s+", " ")
+        if s == "" then return nil end
+        return s
+    end
+    local boss = nil
+    local n = norm(bossName)
+    for _, b in ipairs(state.bosses) do
+        local bn = norm(b.name)
+        if bn and n and (bn == n or bn:find(n, 1, true) or n:find(bn, 1, true)) then
+            boss = b
+            break
         end
     end
+    if not boss then
+        local alive = nil
+        for _, b in ipairs(state.bosses) do
+            if b and not b.killed then
+                if alive then
+                    alive = nil
+                    break
+                end
+                alive = b
+            end
+        end
+        boss = alive
+    end
+    if boss then
+        boss.fightTime = ft
+        return ft
+    end
     return nil
+end
+
+local function NormalizeBossName(s)
+    if type(s) ~= "string" then return nil end
+    s = s:lower()
+    s = s:gsub("ё", "е")
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    s = s:gsub("%s+", " ")
+    if s == "" then return nil end
+    return s
+end
+
+-- Автосборщик encounterID по challenge mapID для последующего заполнения BossDatabase.
+local function CollectEncounterIdSample(phase, mapID, encounterID, encounterName)
+    if not MPT or not MPT.db then return end
+    local mid = tonumber(mapID)
+    local eid = tonumber(encounterID)
+    if not mid or not eid or mid <= 0 or eid <= 0 then return end
+    if type(MPT.db.encounterIdCollector) ~= "table" then
+        MPT.db.encounterIdCollector = {}
+    end
+    local byMap = MPT.db.encounterIdCollector[mid]
+    if type(byMap) ~= "table" then
+        byMap = {}
+        MPT.db.encounterIdCollector[mid] = byMap
+    end
+    local rec = byMap[eid]
+    if type(rec) ~= "table" then
+        rec = {
+            firstSeen = time(),
+            lastSeen = time(),
+            startCount = 0,
+            endCount = 0,
+            name = nil,
+            names = {},
+        }
+        byMap[eid] = rec
+    end
+    rec.lastSeen = time()
+    if phase == "start" then
+        rec.startCount = (tonumber(rec.startCount) or 0) + 1
+    elseif phase == "end" then
+        rec.endCount = (tonumber(rec.endCount) or 0) + 1
+    end
+    if type(encounterName) == "string" and encounterName ~= "" then
+        rec.name = encounterName
+        rec.names[encounterName] = (tonumber(rec.names[encounterName]) or 0) + 1
+    end
+end
+
+local function FindBossIndexForName(bossName)
+    if not state or not state.bosses or not bossName then return nil end
+    local n = NormalizeBossName(bossName)
+    for i, b in ipairs(state.bosses) do
+        local bn = NormalizeBossName(b.name)
+        if bn and n and (bn == n or bn:find(n, 1, true) or n:find(bn, 1, true)) then
+            return i
+        end
+    end
+    local aliveIdx = nil
+    for i, b in ipairs(state.bosses) do
+        if b and not b.killed then
+            if aliveIdx then
+                return nil
+            end
+            aliveIdx = i
+        end
+    end
+    return aliveIdx
+end
+
+-- Сопоставление имён босса из ASMSG / ENCOUNTER_* со строкой в state.bosses (не только ==).
+local function BossNameMatchScore(nameA, nameB)
+    if type(nameA) ~= "string" or type(nameB) ~= "string" then return 0 end
+    if nameA == nameB then return 100 end
+    local na, nb = NormalizeBossName(nameA), NormalizeBossName(nameB)
+    if not na or not nb then return 0 end
+    if na == nb then return 80 end
+    if na:find(nb, 1, true) or nb:find(na, 1, true) then return 50 end
+    local fa, fb = na:match("^(%S+)"), nb:match("^(%S+)")
+    if fa and fb and #fa >= 3 and fa == fb then return 25 end
+    return 0
+end
+
+-- Слияние нового списка из ASMSG с накопленными killTime/fightTime (имена на сервере могут чуть отличаться).
+local function MergeEncounterBossState(oldBosses, newBosses)
+    if not oldBosses or not newBosses or #newBosses == 0 then return end
+    local elapsed = GetLiveElapsed()
+    local usedOld = {}
+
+    local function assignFromBestOld(newBoss, minScore)
+        local bestJ, bestSc = nil, 0
+        for j, oldBoss in ipairs(oldBosses) do
+            if not usedOld[j] and oldBoss.killed and oldBoss.killTime then
+                local sc = BossNameMatchScore(oldBoss.name, newBoss.name)
+                if sc >= minScore and sc > bestSc then
+                    bestSc = sc
+                    bestJ = j
+                end
+            end
+        end
+        if bestJ then
+            usedOld[bestJ] = true
+            local ob = oldBosses[bestJ]
+            newBoss.killed = true
+            newBoss.killTime = newBoss.killTime or ob.killTime
+            if ob.fightTime then
+                newBoss.fightTime = newBoss.fightTime or ob.fightTime
+            end
+            return true
+        end
+        return false
+    end
+
+    for _, nb in ipairs(newBosses) do
+        if not nb.killTime then
+            assignFromBestOld(nb, 50)
+        end
+    end
+    for _, nb in ipairs(newBosses) do
+        if not nb.killTime then
+            assignFromBestOld(nb, 25)
+        end
+    end
+
+    if #oldBosses == #newBosses then
+        for i = 1, #newBosses do
+            local o, n = oldBosses[i], newBosses[i]
+            -- По индексу в ASMSG порядок боссов стабилен, даже если строки имён различаются по локали.
+            -- Поэтому переносим состояние/тайминги по позиции без жёсткой проверки имени.
+            if o.killed and o.killTime then
+                n.killed = true
+                n.killTime = n.killTime or o.killTime
+                if o.fightTime then
+                    n.fightTime = n.fightTime or o.fightTime
+                end
+            end
+            if o.killed and not n.killed then
+                n.killed = true
+            end
+            if n.killed and not o.killed and not n.killTime then
+                n.killTime = tonumber(state and state.lastEncounterEndElapsed) or elapsed
+                local st = tonumber(state and state.encounterStartElapsed)
+                local lft = tonumber(state and state.lastEncounterFightTime)
+                if lft and lft >= 0 and not n.fightTime then
+                    n.fightTime = lft
+                elseif st and elapsed >= st and not n.fightTime then
+                    n.fightTime = math.max(0, elapsed - st)
+                end
+                if MPT.db and MPT.db.debug then
+                    MPT:Print(string.format(
+                        "ASMSG kill inferred: idx=%d name=%s kill=%s fight=%s",
+                        i, tostring(n.name), FormatTime(n.killTime),
+                        n.fightTime and FormatTime(n.fightTime) or "—"))
+                end
+            end
+        end
+    end
+
+    -- Сервер иногда шлёт 0 для уже убитого — восстанавливаем только при уверенном совпадении имён.
+    for _, newBoss in ipairs(newBosses) do
+        if not newBoss.killed then
+            for _, oldBoss in ipairs(oldBosses) do
+                if oldBoss.killed and BossNameMatchScore(oldBoss.name, newBoss.name) >= 50 then
+                    newBoss.killed = true
+                    newBoss.killTime = newBoss.killTime or oldBoss.killTime
+                    if oldBoss.fightTime then
+                        newBoss.fightTime = newBoss.fightTime or oldBoss.fightTime
+                    end
+                    break
+                end
+            end
+        end
+    end
+
+    -- Финальный fallback: если ASMSG уже говорит "убит", а локального времени нет — заполняем из live elapsed.
+    -- Нужен для кейсов, где состав/порядок ASMSG отличается (например Nazan/Vazruden в одном инсте).
+    for _, newBoss in ipairs(newBosses) do
+        if newBoss.killed and not newBoss.killTime then
+            local fallbackKill = tonumber(state and state.lastEncounterEndElapsed) or elapsed
+            newBoss.killTime = fallbackKill
+            if not newBoss.fightTime then
+                local nLast = NormalizeBossName(state and state.lastEncounterBossName)
+                local nCur  = NormalizeBossName(newBoss.name)
+                if nLast and nCur and BossNameMatchScore(nLast, nCur) >= 25 then
+                    local lft = tonumber(state and state.lastEncounterFightTime)
+                    if lft and lft >= 0 then
+                        newBoss.fightTime = lft
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Если BOSS_KILL не пришёл (частный сервер), фиксируем время убийства по ENCOUNTER_END.
+local function RecordBossKillTimestamp(bossName, elapsedNow)
+    if not state or not state.running or not state.bosses or not bossName then return end
+    elapsedNow = tonumber(elapsedNow) or GetLiveElapsed()
+    local n = NormalizeBossName(bossName)
+    local boss = nil
+    for _, b in ipairs(state.bosses) do
+        local bn = NormalizeBossName(b.name)
+        if bn and n and (bn == n or bn:find(n, 1, true) or n:find(bn, 1, true)) then
+            boss = b
+            break
+        end
+    end
+    if not boss then
+        for _, b in ipairs(state.bosses) do
+            if b and not b.killed then
+                if boss then
+                    boss = nil
+                    break
+                end
+                boss = b
+            end
+        end
+    end
+    if boss then
+        boss.killed = true
+        if not boss.killTime then
+            boss.killTime = elapsedNow
+        end
+        if MPT.charDb then
+            MPT.charDb.bosses = state.bosses
+        end
+    end
 end
 
 UpdateBossDisplay = function()
@@ -4605,21 +4909,13 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         end
         -- ASMSG_INSTANCE_ENCOUNTERS_STATE: список боссов при старте ключа
         if prefix == "ASMSG_INSTANCE_ENCOUNTERS_STATE" and msg and #msg > 0 then
-            local newBosses = ParseEncounterState(msg)
-            -- Сливаем с текущим состоянием: сохраняем killTime для уже убитых
-            local oldBosses = state.bosses
-            if oldBosses then
-                for _, newBoss in ipairs(newBosses) do
-                    for _, oldBoss in ipairs(oldBosses) do
-                        if oldBoss.name == newBoss.name and oldBoss.killed then
-                            -- Сохраняем локальное состояние (ASMSG может прислать status=0 для убитого босса)
-                            newBoss.killed   = true
-                            newBoss.killTime = oldBoss.killTime
-                            break
-                        end
-                    end
-                end
+            if GetChallengeModeActive() and not state.running then
+                ExitHistoryPreviewForLiveRun()
+                completionHandledForRun = false
+                MPT:StartTimer(false)
             end
+            local newBosses = ParseEncounterState(msg)
+            MergeEncounterBossState(state.bosses, newBosses)
             state.bosses = newBosses
             -- Сохраняем в charDb — переживёт /reload
             if MPT.charDb then MPT.charDb.bosses = state.bosses end
@@ -4632,24 +4928,76 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "ENCOUNTER_START" then
         -- args: encounterID, encounterName, difficultyID, groupSize
         if state.running then
+            local encounterID, encounterName = ...
+            CollectEncounterIdSample("start", state.mapID, encounterID, encounterName)
             state.encounterStartElapsed = GetLiveElapsed()
+            local canon = nil
+            if MPT.ResolveEncounterToBossName then
+                canon = MPT:ResolveEncounterToBossName(state.mapID, encounterID, encounterName)
+            end
+            state.encounterStartBossName = canon or encounterName
+            state.encounterStartBossIndex = FindBossIndexForName(state.encounterStartBossName)
+            state.lastEncounterEndElapsed = nil
+            state.lastEncounterFightTime = nil
+            state.lastEncounterBossName = state.encounterStartBossName
             if MPT.db and MPT.db.debug then
-                local _, encName = ...
-                MPT:Print("ENCOUNTER_START: " .. tostring(encName)
-                    .. "  elapsed=" .. FormatTime(state.encounterStartElapsed))
+                MPT:Print(string.format(
+                    "ENCOUNTER_START: id=%s name=%s mapped=%s idx=%s elapsed=%s",
+                    tostring(encounterID), tostring(encounterName), tostring(state.encounterStartBossName),
+                    tostring(state.encounterStartBossIndex), FormatTime(state.encounterStartElapsed)))
             end
         end
 
     elseif event == "ENCOUNTER_END" then
         -- args: encounterID, encounterName, difficultyID, groupSize, success (1=kill, 0=wipe)
-        local _, encounterName, _, _, success = ...
+        local encounterID, encounterName, _, _, success = ...
+        CollectEncounterIdSample("end", state.mapID, encounterID, encounterName)
         -- При любом исходе (убийство или вайп) зачищаем engaged мобов:
         -- при убийстве — мобы комнаты мертвы; при вайпе — начинаем заново
         ClearEngaged()
-        if success == 1 and type(encounterName) == "string" and encounterName ~= "" then
-            CaptureFightTimeForBossName(encounterName, GetLiveElapsed())
+        local numSuccess = tonumber(success)
+        local strSuccess = type(success) == "string" and success:lower() or nil
+        local okKill = (success == 1 or success == true or numSuccess == 1 or strSuccess == "1" or strSuccess == "true")
+        local el = GetLiveElapsed()
+        local canon = nil
+        if MPT.ResolveEncounterToBossName then
+            canon = MPT:ResolveEncounterToBossName(state.mapID, encounterID, encounterName)
+        end
+        local targetFromStart = state.encounterStartBossName
+        local targetName = canon or targetFromStart or encounterName
+        state.lastEncounterEndElapsed = el
+        state.lastEncounterBossName = targetName
+        local st = tonumber(state.encounterStartElapsed)
+        if st and el >= st then
+            state.lastEncounterFightTime = math.max(0, el - st)
+        else
+            state.lastEncounterFightTime = nil
+        end
+        if okKill and state.running then
+            local target = canon or targetFromStart or encounterName
+            local bossIdx = state.encounterStartBossIndex or FindBossIndexForName(target)
+            if bossIdx and state.bosses and state.bosses[bossIdx] then
+                local b = state.bosses[bossIdx]
+                b.killed = true
+                if not b.killTime then
+                    b.killTime = el
+                end
+                local ft = tonumber(state.lastEncounterFightTime)
+                if ft and ft >= 0 then
+                    b.fightTime = ft
+                end
+            end
+            if type(target) == "string" and target ~= "" then
+                CaptureFightTimeForBossName(target, el)
+                RecordBossKillTimestamp(target, el)
+            end
         end
         state.encounterStartElapsed = nil
+        state.encounterStartBossName = nil
+        state.encounterStartBossIndex = nil
+        if state.bosses and #state.bosses > 0 then
+            UpdateBossDisplay()
+        end
 
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         if not state.running then return end
@@ -4694,18 +5042,37 @@ evFrame:SetScript("OnEvent", function(_, event, ...)
         end
 
     elseif event == "BOSS_KILL" then
-        local _, bossName = ...
+        local bossName = ...
         if state.bosses and bossName and state.running then
-            for _, boss in ipairs(state.bosses) do
-                if boss.name == bossName then
-                    boss.killed   = true
-                    -- GetTime() даёт актуальное значение прямо сейчас, а не из прошлого OnUpdate-кадра
-                    boss.killTime = state.startTime and (GetTime() - state.startTime) or state.elapsed
-                    CaptureFightTimeForBossName(boss.name, boss.killTime)
+            local boss = nil
+            local n = NormalizeBossName(bossName)
+            for _, b in ipairs(state.bosses) do
+                local bn = NormalizeBossName(b.name)
+                if bn and n and (bn == n or bn:find(n, 1, true) or n:find(bn, 1, true)) then
+                    boss = b
                     break
                 end
             end
-            state.encounterStartElapsed = nil
+            if not boss then
+                for _, b in ipairs(state.bosses) do
+                    if b and not b.killed then
+                        if boss then
+                            boss = nil
+                            break
+                        end
+                        boss = b
+                    end
+                end
+            end
+            if boss then
+                boss.killed   = true
+                -- GetTime() даёт актуальное значение прямо сейчас, а не из прошлого OnUpdate-кадра
+                boss.killTime = state.startTime and (GetTime() - state.startTime) or state.elapsed
+                CaptureFightTimeForBossName(boss.name, boss.killTime)
+                if MPT.charDb then
+                    MPT.charDb.bosses = state.bosses
+                end
+            end
             UpdateBossDisplay()
         end
     end

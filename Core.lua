@@ -281,6 +281,52 @@ function MPT:Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[MPT]|r " .. tostring(msg))
 end
 
+function MPT:PrintCollectedEncounterIds(mapFilter)
+    local collector = self.db and self.db.encounterIdCollector
+    if type(collector) ~= "table" then
+        self:Print("Автосборщик encounterID пока пуст.")
+        return
+    end
+
+    local mapIds = {}
+    for mapID, byMap in pairs(collector) do
+        if type(byMap) == "table" then
+            local nMap = tonumber(mapID)
+            if nMap and (not mapFilter or nMap == mapFilter) then
+                mapIds[#mapIds + 1] = nMap
+            end
+        end
+    end
+    table.sort(mapIds)
+    if #mapIds == 0 then
+        if mapFilter then
+            self:Print("Для mapID " .. tostring(mapFilter) .. " данных нет.")
+        else
+            self:Print("Автосборщик encounterID пока пуст.")
+        end
+        return
+    end
+
+    self:Print("Собранные encounterID:")
+    for _, mapID in ipairs(mapIds) do
+        local byMap = collector[mapID]
+        local eids = {}
+        for eid in pairs(byMap) do
+            local n = tonumber(eid)
+            if n then eids[#eids + 1] = n end
+        end
+        table.sort(eids)
+        self:Print(string.format("mapID %d:", mapID))
+        for _, eid in ipairs(eids) do
+            local rec = byMap[eid]
+            local name = (rec and rec.name) or "?"
+            local sc = tonumber(rec and rec.startCount) or 0
+            local ec = tonumber(rec and rec.endCount) or 0
+            self:Print(string.format("  %d -> %s (start=%d, end=%d)", eid, tostring(name), sc, ec))
+        end
+    end
+end
+
 -- GetAffixInfo(id) → name [, description [, icon]] (на Sirus может не работать)
 function MPT:GetAffixInfo(affixId)
     if not C_ChallengeMode or not C_ChallengeMode.GetAffixInfo then return nil, nil, nil end
@@ -296,7 +342,9 @@ end
 -- Слэш-команды
 SLASH_MPT1 = "/mpt"
 SlashCmdList["MPT"] = function(msg)
+    msg = tostring(msg or "")
     local cmd = msg:lower():match("^(%S+)")
+    local arg = msg:match("^%S+%s+(.+)$")
 
     if not cmd or cmd == "" then
         if MPT.ToggleConfigWindow then
@@ -329,7 +377,11 @@ SlashCmdList["MPT"] = function(msg)
             MPT:Print("Окно настроек пока недоступно.")
         end
 
+    elseif cmd == "ids" or cmd == "encids" then
+        local mapFilter = tonumber(arg)
+        MPT:PrintCollectedEncounterIds(mapFilter)
+
     else
-        MPT:Print("Команды: /mpt | debug | reset | timer | preview")
+        MPT:Print("Команды: /mpt | debug | reset | timer | preview | ids [mapID]")
     end
 end

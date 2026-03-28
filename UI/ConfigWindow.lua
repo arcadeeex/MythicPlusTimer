@@ -5,6 +5,7 @@ local MPT = MythicPlusTimer
 local cfg
 local contentScroll
 local contentChild
+local contentScrollWrap
 local contentHeight = 460
 local activeSection = "general"
 local sectionFrames = {}
@@ -31,13 +32,17 @@ local dropdowns = {}
 local historyRows = {}
 local historySection
 local historyListClip
+local historyListScroll
+local historyListChild
 local historyListSlider
 local historyEmptyLabel
-local historyScrollOffset = 0
-local historyVisibleRows = 13
+local historyDeleteBtn
+local historyRowHeight = 48
+local historySelectedEntry
 local historyDetailWindow
 local historyDetailTitle
 local historyDetailText
+local UpdatePreviewButtonText
 
 local THEME = {
     bg = { 0.03, 0.03, 0.03, 0.96 },
@@ -347,7 +352,13 @@ local function BuildRunDetailText(entry)
     if type(entry.bosses) == "table" and #entry.bosses > 0 then
         for _, boss in ipairs(entry.bosses) do
             if boss.killed then
-                lines[#lines + 1] = string.format("  [x] %s — %s", boss.name or "?", FormatDuration(boss.killTime))
+                local ft = tonumber(boss.fightTime)
+                if ft and ft > 0 then
+                    lines[#lines + 1] = string.format("  [x] %s — %s (бой %s)",
+                        boss.name or "?", FormatDuration(boss.killTime), FormatDuration(ft))
+                else
+                    lines[#lines + 1] = string.format("  [x] %s — %s", boss.name or "?", FormatDuration(boss.killTime))
+                end
             else
                 lines[#lines + 1] = string.format("  [ ] %s — не убит", boss.name or "?")
             end
@@ -467,6 +478,7 @@ local function ShowHistoryDetails(entry)
     if MPT and MPT.ShowHistoryRunOnTimer then
         MPT:ShowHistoryRunOnTimer(entry)
     end
+    UpdatePreviewButtonText()
 end
 
 -- -----------------------------------------------------------------------------
@@ -693,7 +705,7 @@ local function IsTimerVisible()
     return timerFrame and timerFrame:IsShown() or false
 end
 
-local function UpdatePreviewButtonText()
+UpdatePreviewButtonText = function()
     if not previewToggleBtn or not previewToggleBtn.txt then return end
     if IsTimerVisible() then
         previewToggleBtn.txt:SetText("Скрыть превью")
@@ -741,6 +753,14 @@ local function ShowSection(id)
         sf:SetHeight(sf.contentHeight)
     end
     UpdateContentHeight(sf and sf.contentHeight or contentHeight)
+    if contentScrollWrap then
+        if id == "history" then
+            contentScrollWrap:Hide()
+        else
+            local maxV = contentScroll and contentScroll:GetVerticalScrollRange() or 0
+            contentScrollWrap:SetShown(maxV > 0)
+        end
+    end
     for sid, b in pairs(navButtons) do
         if sid == id then
             b.txt:SetTextColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
@@ -1092,31 +1112,96 @@ local function BuildColorsSection()
 end
 
 local function RefreshHistorySection()
-    if not historySection or not historyListClip then return end
+    if not historySection or not historyListClip or not historyListChild then return end
 
     local runs = (MPT.GetRunHistory and MPT:GetRunHistory()) or {}
     if type(runs) ~= "table" then runs = {} end
-    local maxOffset = math.max(0, #runs - historyVisibleRows)
-    if historyScrollOffset > maxOffset then historyScrollOffset = maxOffset end
-    if historyScrollOffset < 0 then historyScrollOffset = 0 end
+    local selectedIndex = nil
+    if historySelectedEntry then
+        for i, e in ipairs(runs) do
+            if e == historySelectedEntry then
+                selectedIndex = i
+                break
+            end
+        end
+        if not selectedIndex then
+            historySelectedEntry = nil
+        end
+    end
 
-    for i = 1, historyVisibleRows do
+    local topPad = 3
+    local sidePad = 2
+    local clipH = historyListClip:GetHeight() or 0
+    local minContentH = math.max(clipH - 6, 1)
+    local contentH = math.max(minContentH, #runs * historyRowHeight + topPad * 2)
+    historyListChild:SetHeight(contentH)
+    historyListChild:SetWidth(math.max((historyListClip:GetWidth() or 0) - sidePad * 2, 1))
+
+    for i, entry in ipairs(runs) do
         local row = historyRows[i]
-        local idx = historyScrollOffset + i
-        local entry = runs[idx]
-        if row and entry then
-            row.entry = entry
-            row.title:SetText(BuildRunSummaryText(entry))
-            row.meta:SetText(string.format("%s  |  %s", BuildAffixLine(entry), FormatRunDate(entry.completedAt)))
-            if row.party then
-                row.party:SetText(BuildPartyLine(entry))
-            end
-            row:Show()
-        elseif row then
+        if not row then
+            row = CreateFrame("Button", nil, historyListChild)
+            row:SetHeight(historyRowHeight - 2)
+            ApplyPanelStyle(row, true)
+
+            row.title = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+            row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -4)
+            row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -4)
+            row.title:SetJustifyH("LEFT")
+            row.title:SetTextColor(THEME.text[1], THEME.text[2], THEME.text[3], 1)
+
+            row.meta = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            row.meta:SetPoint("TOPLEFT", row.title, "BOTTOMLEFT", 0, -2)
+            row.meta:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -2)
+            row.meta:SetJustifyH("LEFT")
+            row.meta:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
+
+            row.party = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            row.party:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 6, 4)
+            row.party:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 4)
+            row.party:SetJustifyH("LEFT")
+            row.party:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
+
+            row:SetScript("OnClick", function(self)
+                if self.entry then
+                    historySelectedEntry = self.entry
+                    RefreshHistorySection()
+                    ShowHistoryDetails(self.entry)
+                end
+            end)
+            row:SetScript("OnEnter", function(self)
+                self:SetBackdropBorderColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 0.8)
+            end)
+            row:SetScript("OnLeave", function(self)
+                if self.entry and historySelectedEntry and self.entry == historySelectedEntry then
+                    self:SetBackdropBorderColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+                else
+                    self:SetBackdropBorderColor(THEME.border[1], THEME.border[2], THEME.border[3], 1)
+                end
+            end)
+
+            historyRows[i] = row
+        end
+
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", historyListChild, "TOPLEFT", sidePad, -topPad - (i - 1) * historyRowHeight)
+        row:SetPoint("TOPRIGHT", historyListChild, "TOPRIGHT", -sidePad, -topPad - (i - 1) * historyRowHeight)
+        row.entry = entry
+        row.title:SetText(BuildRunSummaryText(entry))
+        row.meta:SetText(string.format("%s  |  %s", BuildAffixLine(entry), FormatRunDate(entry.completedAt)))
+        row.party:SetText(BuildPartyLine(entry))
+        if selectedIndex and i == selectedIndex then
+            row:SetBackdropBorderColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 1)
+        else
+            row:SetBackdropBorderColor(THEME.border[1], THEME.border[2], THEME.border[3], 1)
+        end
+        row:Show()
+    end
+
+    for i = #runs + 1, #historyRows do
+        local row = historyRows[i]
+        if row then
             row.entry = nil
-            if row.party then
-                row.party:SetText("")
-            end
             row:Hide()
         end
     end
@@ -1124,17 +1209,20 @@ local function RefreshHistorySection()
     if historyEmptyLabel then
         historyEmptyLabel:SetShown(#runs == 0)
     end
+    if historyDeleteBtn then
+        historyDeleteBtn:SetShown(historySelectedEntry ~= nil)
+    end
 
-    if historyListSlider then
-        if #runs > historyVisibleRows then
-            historyListSlider:SetMinMaxValues(0, maxOffset)
-            historyListSlider:SetValue(historyScrollOffset)
-            historyListSlider:Show()
-        else
-            historyListSlider:SetMinMaxValues(0, 0)
-            historyListSlider:SetValue(0)
-            historyListSlider:Hide()
+    if historyListScroll and historyListSlider then
+        local maxV = historyListScroll:GetVerticalScrollRange() or 0
+        local curV = historyListScroll:GetVerticalScroll() or 0
+        if curV > maxV then
+            curV = maxV
+            historyListScroll:SetVerticalScroll(curV)
         end
+        historyListSlider:SetMinMaxValues(0, maxV)
+        historyListSlider:SetValue(curV)
+        historyListSlider:SetShown(maxV > 0)
     end
 end
 
@@ -1162,47 +1250,18 @@ local function BuildHistorySection()
     historyListClip:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 6, 44)
     historyListClip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, 44)
     ApplyPanelStyle(historyListClip, true)
-    historyListClip:EnableMouseWheel(true)
+    historyListClip:EnableMouseWheel(false)
 
-    local rowH = 48
-    for i = 1, historyVisibleRows do
-        local row = CreateFrame("Button", nil, historyListClip)
-        row:SetPoint("TOPLEFT", historyListClip, "TOPLEFT", 2, -3 - (i - 1) * rowH)
-        row:SetPoint("TOPRIGHT", historyListClip, "TOPRIGHT", -2, -3 - (i - 1) * rowH)
-        row:SetHeight(rowH - 2)
-        ApplyPanelStyle(row, true)
+    historyListScroll = CreateFrame("ScrollFrame", nil, historyListClip)
+    historyListScroll:SetPoint("TOPLEFT", historyListClip, "TOPLEFT", 0, 0)
+    historyListScroll:SetPoint("BOTTOMRIGHT", historyListClip, "BOTTOMRIGHT", 0, 0)
+    historyListScroll:EnableMouseWheel(true)
 
-        row.title = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -4)
-        row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -4)
-        row.title:SetJustifyH("LEFT")
-        row.title:SetTextColor(THEME.text[1], THEME.text[2], THEME.text[3], 1)
-
-        row.meta = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        row.meta:SetPoint("TOPLEFT", row.title, "BOTTOMLEFT", 0, -2)
-        row.meta:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -2)
-        row.meta:SetJustifyH("LEFT")
-        row.meta:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
-
-        row.party = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        row.party:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 6, 4)
-        row.party:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 4)
-        row.party:SetJustifyH("LEFT")
-        row.party:SetTextColor(THEME.muted[1], THEME.muted[2], THEME.muted[3], 1)
-
-        row:SetScript("OnClick", function(self)
-            if self.entry then
-                ShowHistoryDetails(self.entry)
-            end
-        end)
-        row:SetScript("OnEnter", function(self)
-            self:SetBackdropBorderColor(THEME.yellow[1], THEME.yellow[2], THEME.yellow[3], 0.8)
-        end)
-        row:SetScript("OnLeave", function(self)
-            self:SetBackdropBorderColor(THEME.border[1], THEME.border[2], THEME.border[3], 1)
-        end)
-        historyRows[i] = row
-    end
+    historyListChild = CreateFrame("Frame", nil, historyListScroll)
+    historyListChild:SetPoint("TOPLEFT", historyListScroll, "TOPLEFT", 0, 0)
+    historyListChild:SetPoint("TOPRIGHT", historyListScroll, "TOPRIGHT", 0, 0)
+    historyListChild:SetHeight(1)
+    historyListScroll:SetScrollChild(historyListChild)
 
     historyEmptyLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     historyEmptyLabel:SetPoint("CENTER", historyListClip, "CENTER", 0, 0)
@@ -1224,16 +1283,34 @@ local function BuildHistorySection()
         thumb:SetVertexColor(0.60, 0.60, 0.60, 0.95)
     end
     historyListSlider:SetScript("OnValueChanged", function(_, value)
-        local rounded = math.floor(value + 0.5)
-        if rounded ~= historyScrollOffset then
-            historyScrollOffset = rounded
-            RefreshHistorySection()
+        if historyListScroll then
+            historyListScroll:SetVerticalScroll(value)
         end
     end)
 
-    historyListClip:SetScript("OnMouseWheel", function(_, delta)
+    historyListScroll:SetScript("OnVerticalScroll", function(_, offset)
+        historyListSlider:SetValue(offset)
+    end)
+    historyListScroll:SetScript("OnScrollRangeChanged", function(_, _, yRange)
+        local maxV = yRange or 0
+        local curV = historyListScroll:GetVerticalScroll() or 0
+        if curV > maxV then
+            curV = maxV
+            historyListScroll:SetVerticalScroll(curV)
+        end
+        historyListSlider:SetMinMaxValues(0, maxV)
+        historyListSlider:SetValue(curV)
+        historyListSlider:SetShown(maxV > 0)
+    end)
+    historyListScroll:SetScript("OnMouseWheel", function(_, delta)
         if not historyListSlider or not historyListSlider:IsShown() then return end
-        historyListSlider:SetValue(historyScrollOffset - delta)
+        local curV = historyListScroll:GetVerticalScroll() or 0
+        local maxV = historyListScroll:GetVerticalScrollRange() or 0
+        local nextV = curV - delta * 40
+        if nextV < 0 then nextV = 0 end
+        if nextV > maxV then nextV = maxV end
+        historyListScroll:SetVerticalScroll(nextV)
+        historyListSlider:SetValue(nextV)
     end)
 
     local clearBtn = CreateStyledButton(frame, 180, 26, "Очистить историю")
@@ -1244,10 +1321,40 @@ local function BuildHistorySection()
         elseif MPT.db then
             MPT.db.runs = {}
         end
-        historyScrollOffset = 0
+        historySelectedEntry = nil
+        if historyListScroll then
+            historyListScroll:SetVerticalScroll(0)
+        end
         RefreshHistorySection()
         if MPT.Print then
             MPT:Print("История заходов очищена.")
+        end
+    end)
+
+    historyDeleteBtn = CreateStyledButton(frame, 220, 26, "Удалить текущую запись")
+    historyDeleteBtn:SetPoint("LEFT", clearBtn, "RIGHT", 8, 0)
+    historyDeleteBtn:SetShown(false)
+    historyDeleteBtn:SetScript("OnClick", function()
+        if not historySelectedEntry then return end
+        local runs = (MPT.GetRunHistory and MPT:GetRunHistory()) or (MPT.db and MPT.db.runs)
+        if type(runs) ~= "table" then return end
+        for i, e in ipairs(runs) do
+            if e == historySelectedEntry then
+                table.remove(runs, i)
+                break
+            end
+        end
+        historySelectedEntry = nil
+        if historyListScroll then
+            local maxV = historyListScroll:GetVerticalScrollRange() or 0
+            local curV = historyListScroll:GetVerticalScroll() or 0
+            if curV > maxV then
+                historyListScroll:SetVerticalScroll(maxV)
+            end
+        end
+        RefreshHistorySection()
+        if MPT.Print then
+            MPT:Print("Текущая запись удалена.")
         end
     end)
 
@@ -1447,6 +1554,10 @@ local function CreateWindow()
         local timerFrame = _G["MPTTimerFrame"]
         if timerFrame and timerFrame:IsShown() then
             timerFrame:Hide()
+            if historySelectedEntry then
+                historySelectedEntry = nil
+                RefreshHistorySection()
+            end
         else
             if MPT.ShowPreview then MPT:ShowPreview() end
         end
@@ -1519,14 +1630,14 @@ local function CreateWindow()
     contentChild:SetHeight(contentHeight)
     contentScroll:SetScrollChild(contentChild)
 
-    local scrollWrap = CreateFrame("Frame", nil, contentWrap)
-    scrollWrap:SetPoint("TOPLEFT", contentScroll, "TOPRIGHT", 4, 0)
-    scrollWrap:SetPoint("BOTTOMLEFT", contentScroll, "BOTTOMRIGHT", 4, 0)
-    scrollWrap:SetWidth(14)
-    ApplyPanelStyle(scrollWrap, true)
+    contentScrollWrap = CreateFrame("Frame", nil, contentWrap)
+    contentScrollWrap:SetPoint("TOPLEFT", contentScroll, "TOPRIGHT", 4, 0)
+    contentScrollWrap:SetPoint("BOTTOMLEFT", contentScroll, "BOTTOMRIGHT", 4, 0)
+    contentScrollWrap:SetWidth(14)
+    ApplyPanelStyle(contentScrollWrap, true)
 
-    local upBtn = CreateStyledButton(scrollWrap, 14, 14, "")
-    upBtn:SetPoint("TOPLEFT", scrollWrap, "TOPLEFT", 0, 0)
+    local upBtn = CreateStyledButton(contentScrollWrap, 14, 14, "")
+    upBtn:SetPoint("TOPLEFT", contentScrollWrap, "TOPLEFT", 0, 0)
     local upTex = upBtn:CreateTexture(nil, "OVERLAY")
     upTex:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
     upTex:SetSize(8, 8)
@@ -1534,15 +1645,15 @@ local function CreateWindow()
     upTex:SetTexCoord(0, 1, 1, 0)
     upTex:SetVertexColor(THEME.text[1], THEME.text[2], THEME.text[3], 1)
 
-    local downBtn = CreateStyledButton(scrollWrap, 14, 14, "")
-    downBtn:SetPoint("BOTTOMLEFT", scrollWrap, "BOTTOMLEFT", 0, 0)
+    local downBtn = CreateStyledButton(contentScrollWrap, 14, 14, "")
+    downBtn:SetPoint("BOTTOMLEFT", contentScrollWrap, "BOTTOMLEFT", 0, 0)
     local downTex = downBtn:CreateTexture(nil, "OVERLAY")
     downTex:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
     downTex:SetSize(8, 8)
     downTex:SetPoint("CENTER", downBtn, "CENTER", 0, 0)
     downTex:SetVertexColor(THEME.text[1], THEME.text[2], THEME.text[3], 1)
 
-    local scrollBar = CreateFrame("Slider", nil, scrollWrap)
+    local scrollBar = CreateFrame("Slider", nil, contentScrollWrap)
     scrollBar:SetPoint("TOPLEFT", upBtn, "BOTTOMLEFT", 0, -2)
     scrollBar:SetPoint("BOTTOMLEFT", downBtn, "TOPLEFT", 0, 2)
     scrollBar:SetWidth(14)
@@ -1583,10 +1694,12 @@ local function CreateWindow()
     contentScroll:SetScript("OnScrollRangeChanged", function(_, _, yRange)
         local maxVal = yRange or 0
         scrollBar:SetMinMaxValues(0, maxVal)
-        if maxVal > 0 then
-            scrollWrap:Show()
+        if activeSection == "history" then
+            contentScrollWrap:Hide()
+        elseif maxVal > 0 then
+            contentScrollWrap:Show()
         else
-            scrollWrap:Hide()
+            contentScrollWrap:Hide()
         end
         SetScrollValue(contentScroll:GetVerticalScroll() or 0)
     end)

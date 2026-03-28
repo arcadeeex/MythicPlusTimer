@@ -54,3 +54,112 @@ function MPT:GetDungeonBosses(dungeonName, mapID)
     end
     return nil
 end
+
+-- EncounterID (WotLK 3.3.x / Sirus) → каноническое имя из списка боссов данжа.
+-- Если на ядре другой ID — сработает сопоставление по имени (ResolveEncounterToBossName).
+-- Только проверенные ID (остальные данжи — по имени, чтобы не записать бой на чужого босса).
+local bossEncounterIdByMapID = {
+    [4] = {
+        [1603] = "Принц Келесет",
+        [1604] = "Скарвальд и Далронн",
+        [1605] = "Ингвар Расхититель",
+    },
+    [5] = {
+        -- Бастионы Адского Пламени: финальный босс может идти как "Назан" / "Вазруден Глашатай"
+        [1593] = "Начальник стражи Гарголмар",
+        [1594] = "Омор Неодолимый",
+        [1609] = "Вазруден Глашатай", -- Nazan (start)
+        [1595] = "Вазруден Глашатай", -- Vazruden the Herald (end)
+    },
+    [6] = {
+        [1606] = "Менну Предатель",
+        [1607] = "Рокмар Трескун",
+        [1608] = "Зыбун",
+    },
+    [8] = {
+        [1610] = "Кровотролль",
+        [1611] = "Новос Призыватель",
+        [1612] = "Король Дред",
+        [1613] = "Пророк Тарон'джа",
+    },
+    [9] = {
+        [1617] = "Генерал Бьярнгрим",
+        [1618] = "Волхан",
+        [1619] = "Ионар",
+        [1620] = "Локен",
+    },
+    [10] = {
+        [1596] = "Мастер",
+        [1597] = "Броггок",
+        [1598] = "Кели'дан Разрушитель",
+    },
+    [11] = {
+        [1621] = "Пандемоний",
+        [1622] = "Таварок",
+        [1623] = "Принц Шаффар",
+    },
+    [12] = {
+        [1624] = "Старейшина Надокс",
+        [1625] = "Принц Талдарам",
+        [1626] = "Джедога Искательница Теней",
+        [1627] = "Аманитар",
+        [1628] = "Глашатай Волаж",
+    },
+}
+
+local function normEncounterKey(s)
+    if type(s) ~= "string" then return "" end
+    s = s:lower()
+    s = s:gsub("ё", "е")
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    s = s:gsub("%s+", " ")
+    return s
+end
+
+--- Сопоставить ENCOUNTER_* с именем босса из статической базы (для записи fightTime).
+--- @return string|nil каноническое имя как в ASMSG / state.bosses
+function MPT:ResolveEncounterToBossName(mapID, encounterID, encounterName)
+    local list = self:GetDungeonBosses(nil, mapID)
+    if not list or #list == 0 then return nil end
+
+    if encounterID and bossEncounterIdByMapID[mapID] then
+        local byId = bossEncounterIdByMapID[mapID][encounterID]
+        if byId then
+            for _, bn in ipairs(list) do
+                if bn == byId then return bn end
+            end
+        end
+    end
+
+    local nEnc = normEncounterKey(encounterName)
+    if nEnc ~= "" then
+        -- Частный случай Бастиона: этап дракона "Назан" = тот же финальный босс.
+        if mapID == 5 and nEnc == "назан" then
+            for _, bn in ipairs(list) do
+                if bn == "Вазруден Глашатай" then
+                    return bn
+                end
+            end
+        end
+        for _, bn in ipairs(list) do
+            if normEncounterKey(bn) == nEnc then return bn end
+        end
+        for _, bn in ipairs(list) do
+            local nb = normEncounterKey(bn)
+            if nb ~= "" and nEnc ~= "" and (nb:find(nEnc, 1, true) or nEnc:find(nb, 1, true)) then
+                return bn
+            end
+        end
+        local fe = nEnc:match("^(%S+)")
+        if fe and #fe >= 3 then
+            for _, bn in ipairs(list) do
+                local nb = normEncounterKey(bn)
+                local fb = nb:match("^(%S+)")
+                if fb and (fe == fb or nb:find(fe, 1, true) or nEnc:find(fb, 1, true)) then
+                    return bn
+                end
+            end
+        end
+    end
+    return nil
+end
